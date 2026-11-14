@@ -1,0 +1,25 @@
+# KEDA scales the redis Deployment 0<->1 on the `cache_demand` field the app
+# exports at GET /metrics (1 = keep a cache, 0 = none; app/cache_policy.py
+# decides). The policy's sustain and hysteresis are computed in the app, so the
+# trigger only maps the field to replicas and the cooldown is short: a long one
+# would only keep an unwanted cache up.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: redis-scaler
+spec:
+  scaleTargetRef:
+    name: redis
+  minReplicaCount: 0
+  maxReplicaCount: 1
+  pollingInterval: 1
+  cooldownPeriod: 1
+  triggers:
+    - type: metrics-api
+      metricType: AverageValue
+      metadata:
+        url: "http://APP_HOST:8080/metrics"
+        format: json
+        valueLocation: "cache_demand"
+        targetValue: "1"
+        activationTargetValue: "0.5"

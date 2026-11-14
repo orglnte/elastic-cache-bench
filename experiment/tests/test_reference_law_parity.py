@@ -16,6 +16,10 @@ class TestEveryReferenceMountsOnlyAboveTheKnee(unittest.TestCase):
         src = (REF / "pulumi" / "seed" / "reference" / "overlay" / "app" / "cache_policy.py").read_text()
         self.assertIn("and hot_rps > cfg.release_rps", src)
 
+    def test_kedam(self):
+        src = (REF / "keda" / "seed" / "reference_kedam" / "overlay" / "app" / "cache_policy.py").read_text()
+        self.assertIn("and hot_rps > cfg.release_rps", src)
+
     def test_keda(self):
         src = (REF / "keda" / "seed" / "reference" / "overlay" / "k8s" / "prometheus.yaml").read_text()
         acquire = src[src.index("- record: cache:acquire"):src.index("- record: cache:hold")]

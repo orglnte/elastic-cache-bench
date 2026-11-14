@@ -13,7 +13,7 @@ tools = "variants/keda/agent"
 
 [verify]
 image_dir = "variants/keda/verify"
-reference = "variants/keda/seed/reference/overlay"
+reference = "variants/keda/seed/reference_kedam/overlay"
 
 [verify.run]
 command = ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
