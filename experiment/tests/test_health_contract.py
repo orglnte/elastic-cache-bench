@@ -1,14 +1,9 @@
-"""app/health.py — the deploy contract every treatment gates on.
+"""app/health.py — the deploy contract every variant gates on.
 
-/health is a FIXED skeleton file (in .skeleton_manifest, reverted by
-restore_fixed.py), so its meaning is the rig's to define, not the agent's. The
-rig starts a verify only while it holds 200, so it has to mean "this service can
-serve", not "this process is alive".
-
-It previously returned 200 unconditionally while its own docstring claimed "200
-once the pool is open". A service whose store was unreachable therefore passed
-readiness, failed at e2e, and was scored as an authoring failure — the same
-class of contamination that cost 15 attempts across 10 cells on 2026-08-02.
+/health is a fixed skeleton file, so its meaning is the rig's to define, not
+the agent's. The rig starts a verify only while it holds 200, so it has to mean
+"this service can serve", not "this process is alive": 503 while the store does
+not answer.
 """
 import sys
 import unittest
@@ -16,9 +11,9 @@ from pathlib import Path
 
 # Deliberately NOT via tests/_ctx: this module must import under the CELL venv
 # (the only interpreter with fastapi), and _ctx pulls the orchestrator's deps.
-ROOT = Path(__file__).resolve().parents[1]
+SKELETON = Path(__file__).resolve().parents[1] / "task" / "skeleton"
 
-sys.path.insert(0, str(ROOT / "experiment" / "seeds" / "skeleton" / "common"))
+sys.path.insert(0, str(SKELETON))
 
 # fastapi lives in the CELL venv, not the orchestrator's interpreter. Skip
 # rather than fail there, and run it explicitly with:
@@ -96,7 +91,7 @@ class TestHealthReflectsTheStore(unittest.TestCase):
     def test_it_round_trips_rather_than_trusting_the_pool_object(self):
         """A pool can exist while the backend refuses connections; presence of
         the object is not evidence of reachability."""
-        src = (Path(ROOT) / "experiment" / "seeds" / "skeleton" / "common" / "app" / "health.py").read_text()
+        src = (SKELETON / "app" / "health.py").read_text()
         self.assertIn("SELECT 1", src)
         self.assertIn("fetchone", src)
 
