@@ -229,7 +229,7 @@ class TestFailureClassification(VerifyTestCase):
               "store", "k6", "contract", "load-shape"}
     ENGINE_STAGES = {"harness-fp", "harness-heal", "exclusive-lock", "verifier",
                      "verifier-timeout", "verifier-image", "verifier-host", "infra", "integrity",
-                     "rig-output", "host-sleep"}
+                     "rig-output", "host-sleep", "host-busy"}
 
     def test_the_stage_names_are_the_recorded_vocabulary(self):
         # fae/experiment/scoring/validate.py and score_cell both branch on these exact
