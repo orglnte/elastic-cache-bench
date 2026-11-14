@@ -44,6 +44,7 @@ from pathlib import Path
 import fae.experiment
 from fae.experiment import config as _config
 from fae.cell.contrib import elastic_resource
+from fae.cell.contrib.elastic_resource import calibration as _calibration
 from fae.cell.contrib.elastic_resource.trace import first_request_epoch
 from fae.cell.infra import secrunner
 from fae.cell.infra.dind import VerifyDind
@@ -52,6 +53,7 @@ from fae.experiment.variants import _ShimCell
 from fae.cell.verify import (ENGINE_INSTRUMENTS, Ctx, Verdict, Verifier, _now, call,
                              record_event, run_in_thread)
 
+from .. import CONFIG
 from ..variants import service
 from . import contract
 from . import rig
@@ -87,6 +89,19 @@ ARRANGEMENT_FILES = ("verify.log", "k6.log", "deploy.log", "teardown.log",
 
 def _now():
     return f"{datetime.now(timezone.utc):%Y-%m-%dT%H:%M:%SZ}"
+
+
+def load_params(cfg):
+    """The [load] keys of `cfg` (config values by key) as numbers, each
+    missing one at its CONFIG default."""
+    return {"baseline": int(cfg.get("LOAD_BASELINE_RPS") or 18),
+            "top": int(cfg.get("LOAD_TOP_RPS") or 360),
+            "ramp_s": int(cfg.get("LOAD_RAMP_S") or 20),
+            "hold_s": str(cfg.get("LOAD_HOLD_S") or "").strip(),
+            "blip_p99_ms": float(cfg.get("LOAD_BLIP_P99_MS") or 50),
+            "blip_excess_req": int(cfg.get("LOAD_BLIP_EXCESS_REQ") or 10),
+            "sat_p99_ms": float(cfg.get("LOAD_SAT_P99_MS") or 150),
+            "max_mount_s": float(cfg.get("LOAD_MAX_MOUNT_S") or 30)}
 
 
 class Result:
@@ -650,15 +665,7 @@ class Verify:
         pressure, and how many requests over the knee it then offers), and
         the two numbers the law reads — the p99 at which the store counts as
         saturated and the mount deadline after it."""
-        c = self.cfg
-        return {"baseline": int(c.get("LOAD_BASELINE_RPS") or 18),
-                "top": int(c.get("LOAD_TOP_RPS") or 360),
-                "ramp_s": int(c.get("LOAD_RAMP_S") or 20),
-                "hold_s": str(c.get("LOAD_HOLD_S") or "").strip(),
-                "blip_p99_ms": float(c.get("LOAD_BLIP_P99_MS") or 50),
-                "blip_excess_req": int(c.get("LOAD_BLIP_EXCESS_REQ") or 10),
-                "sat_p99_ms": float(c.get("LOAD_SAT_P99_MS") or 150),
-                "max_mount_s": float(c.get("LOAD_MAX_MOUNT_S") or 30)}
+        return load_params(self.cfg)
 
     def load_env(self):
         """The [load] keys as the block's instruments read them."""
@@ -1000,6 +1007,25 @@ class ElasticCacheVerifier(Verifier):
     MEASURED_STAGES = {"e2e", "k6", "scaling"}     # the load runs against the infra
     PREFIXES = {"container": rig.STORE_PREFIX, "network": rig.NET_PREFIX}
     RUN_LOG = service.SERVICE_LOG
+    CALIBRATION_KEYS = tuple(k for k, (section, *_) in CONFIG.items() if section == "load")
+    # A top below every host's knee: the spike never saturates the store.
+    CALIBRATION_GUARD = {"variant": "pulumi_sealed_apidocs", "env": {"LOAD_TOP_RPS": 60},
+                         "stage": "load-shape"}
+
+    @classmethod
+    def calibration_values(cls, arrangement_dir):
+        """The contrib's per-spike values of one archived arrangement, read
+        with the saturation p99 and the traffic-lag cap the law judges with
+        (VERIFY_MAX_LAG_S, else the law's default)."""
+        conf = fae.experiment.exp().config()
+        lag = conf.get("VERIFY_MAX_LAG_S")
+        return _calibration.values_from(
+            arrangement_dir, sat_p99=load_params(conf.values)["sat_p99_ms"],
+            **({"max_lag": float(lag)} if lag else {}))
+
+    @classmethod
+    def estimated_spread(cls, name, value):
+        return _calibration.estimated_spread(name, value)
 
     @classmethod
     def identities(cls, cid):
