@@ -1,0 +1,41 @@
+"""GET /health — liveness + readiness + cache_mounted (reference solution).
+GET /metrics — the exported load signals.
+"""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, Request
+
+
+def make_health_router() -> APIRouter:
+    router = APIRouter()
+
+    @router.get("/health")
+    async def health(request: Request) -> dict:
+        st = request.app.state
+        pool_stats = st.pool.get_stats() if getattr(st, "pool", None) else {}
+        return {
+            "status": "ok",
+            "task": st.task,
+            # true only while a cache backend actually exists and answers:
+            # the provisioner only sets its client after a successful ping.
+            "cache_mounted": st.prov.mounted,
+            "pool_pressure": st.metrics.get("pool_pressure", 0.0),
+            "p99_ms": st.metrics.get("p99_ms", 0.0),
+            "rps": st.metrics.get("rps", 0.0),
+            "inflight": st.metrics.get("inflight", 0),
+            "pool_size": pool_stats.get("pool_size", 0),
+            "pool_waiting": pool_stats.get("requests_waiting", 0),
+        }
+
+    @router.get("/metrics")
+    async def metrics(request: Request) -> dict:
+        m = request.app.state.metrics
+        return {
+            "pool_pressure": m.get("pool_pressure", 0.0),
+            "p99_ms": m.get("p99_ms", 0.0),
+            "rps": m.get("rps", 0.0),
+            "inflight": m.get("inflight", 0),
+        }
+
+    return router

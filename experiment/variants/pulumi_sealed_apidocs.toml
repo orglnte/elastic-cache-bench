@@ -1,0 +1,23 @@
+label = "Pulumi"
+factors = { tech = "pulumi", access = "sealed", docs = "apidocs" }
+
+[authoring]
+template = ["task/skeleton", "variants/pulumi/seed/overlay"]
+surface = { prefixes = ["app/"] }
+tools = "variants/pulumi/agent"
+
+[authoring.inputs]
+"TODO.md" = "task/T1.PROMPT.md"
+"docs/project.md" = "variants/pulumi/seed/T1.pulumi.project_layout.md"
+"docs/pulumi.md" = "variants/pulumi/seed/any.pulumi.apidocs.api.md"
+
+[verify]
+image_dir = "variants/pulumi/verify"
+reference = "variants/pulumi/seed/reference/overlay"
+
+[verify.run]
+command = ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+serves = 8080
+
+[infra]
+class = "variants.pulumi:Pulumi"

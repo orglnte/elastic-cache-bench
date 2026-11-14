@@ -1,0 +1,19 @@
+# machine-local: this host's paths, the credentials directory, caps, tuning
+fae.toml
+# cells, their lock plane, and the two-stage delete's holding area
+workspaces/
+workspaces.nosync/
+ws-test.nosync/
+ws-smoke.nosync/
+# archived cells (evidence kept, never versioned)
+ws-archive.nosync/
+.to_be_deleted/
+tmp/
+__pycache__/
+*.pyc
+.DS_Store
+PEM.md
+
+# agent credentials, per CLI (never committed)
+.agent-home/
+COMMIT_MSG

@@ -1,0 +1,12 @@
+{
+ "_help": "Copy to workspaces/<cell_id>/grading.json and fill. HUMAN-graded fields ONLY: first_pass_correct, correctness_tier, acceptance_met, grader, notes (and optionally iterations_to_green to override the parse). Do NOT put e2e/load/deploy here \u2014 those are AUTO from the verifier (metrics.json). See scoring/rubric.md.",
+ "grader": "TODO your-name",
+ "first_pass_correct": false,
+ "correctness_tier": "static",
+ "acceptance_met": [
+  "AC1",
+  "AC2"
+ ],
+ "iterations_to_green": null,
+ "notes": "Free-text observations (tier used, anything the analyst should know)."
+}

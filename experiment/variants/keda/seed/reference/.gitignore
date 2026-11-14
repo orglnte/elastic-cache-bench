@@ -1,0 +1,3 @@
+# Assembled at deploy time from exp-2's skeleton + fixture (single source of
+# truth). Never committed — it would go stale against exp-2.
+build/

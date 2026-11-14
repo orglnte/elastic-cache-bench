@@ -1,0 +1,55 @@
+# JSON->Prometheus bridge. The app exposes GET /metrics as JSON (pool_pressure,
+# p99_ms, rps); Prometheus speaks text-exposition, not JSON. json_exporter fetches
+# the app's JSON target server-side and re-exposes the three golden signals as
+# Prometheus metrics. This bridge is one of the coordinated EXTERNAL surfaces the
+# KEDA path needs that an in-code path does not — it keeps the scaling law
+# out of app code (the whole point of the "conventional/external" treatment).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: json-exporter-config
+data:
+  config.yml: |
+    modules:
+      default:
+        metrics:
+          - name: app_pool_pressure
+            path: '{ .pool_pressure }'
+            help: "store connection-pool saturation (SATURATION golden signal)"
+          - name: app_p99_ms
+            path: '{ .p99_ms }'
+            help: "served p99 latency in ms (LATENCY golden signal / SLO ground truth)"
+          - name: app_rps
+            path: '{ .rps }'
+            help: "admitted requests/s, 5s window (TRAFFIC golden signal — cache does not mask it)"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: json-exporter
+  labels: { app: json-exporter }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: json-exporter } }
+  template:
+    metadata: { labels: { app: json-exporter } }
+    spec:
+      containers:
+        - name: json-exporter
+          image: prometheuscommunity/json-exporter:v0.6.0
+          imagePullPolicy: IfNotPresent
+          args: ["--config.file=/config/config.yml"]
+          ports: [{ containerPort: 7979 }]
+          volumeMounts:
+            - { name: config, mountPath: /config }
+      volumes:
+        - name: config
+          configMap: { name: json-exporter-config }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: json-exporter
+spec:
+  selector: { app: json-exporter }
+  ports: [{ port: 7979, targetPort: 7979 }]

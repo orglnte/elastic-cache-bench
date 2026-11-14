@@ -1,0 +1,24 @@
+label = "KEDA"
+factors = { tech = "keda", access = "sealed", docs = "apidocs" }
+
+[authoring]
+template = ["task/skeleton", "variants/keda/seed/overlay"]
+surface = { prefixes = ["app/", "k8s/"] }
+tools = "variants/keda/agent"
+
+[authoring.inputs]
+"TODO.md" = "task/T1.PROMPT.md"
+"docs/project.md" = "variants/keda/seed/T1.keda.project_layout.md"
+"docs/keda.md" = "variants/keda/seed/any.kedap.apidocs.api.md"
+
+[verify]
+image_dir = "variants/keda/verify"
+reference = "variants/keda/seed/reference/overlay"
+
+[verify.run]
+command = ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+serves = 8080
+
+[infra]
+class = "variants.keda:Keda"
+params = { scaler = "prometheus" }

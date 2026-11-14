@@ -1,0 +1,125 @@
+# Prometheus — the EXTERNAL surface that expresses the parts of the cache-scaling
+# law KEDA cannot express itself. Two jobs:
+#
+#   1. Scrape the golden signals (via json-exporter) on a 1s cadence.
+#   2. Recording rules (rules.yml) compute the law that KEDA's own trigger algebra
+#      cannot:
+#        * AND-conjunction — KEDA multi-trigger scale-up is OR, so "SATURATION high
+#          AND LATENCY breaching" must be ANDed here.
+#        * Sustain / blip-rejection — the mount is a scale-FROM-ZERO, which KEDA
+#          cannot debounce (no stabilization on 0->1). The sustain window therefore
+#          has to live INSIDE the metric value: min_over_time[5s] means both signals
+#          must hold across the whole window, so a blip too short to outlast
+#          provisioning collapses the min to 0 and is rejected. This is the exact
+#          semantics of an in-code sustain_s=5 — but authored out here in PromQL.
+#
+# evaluation/scrape interval is 1s (NOT the 15s default) so the external control
+# loop reacts on the same timescale as an in-process on_load_sample cadence;
+# a 15s eval would manufacture an unfair KEDA lag.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 1s
+      evaluation_interval: 1s
+    rule_files:
+      - /etc/prometheus/rules.yml
+    scrape_configs:
+      - job_name: app-golden-signals
+        metrics_path: /probe
+        params:
+          module: [default]
+        static_configs:
+          - targets:
+              - 'http://photoapp.ecb.svc.cluster.local:8080/metrics'
+        relabel_configs:
+          # hand the app URL to json-exporter as ?target=, then point the scrape
+          # at json-exporter itself (it fetches the target and returns prom text).
+          - source_labels: [__address__]
+            target_label: __param_target
+          - source_labels: [__param_target]
+            target_label: instance
+          - target_label: __address__
+            replacement: 'json-exporter.ecb.svc.cluster.local:7979'
+  rules.yml: |
+    groups:
+      - name: cache-law
+        interval: 1s
+        rules:
+          # ACQUIRE = SATURATION high AND LATENCY breaching AND TRAFFIC above the
+          # store's knee, SUSTAINED >= provision time. min_over_time[5s] enforces
+          # the sustain: a transient blip drops the min below threshold -> product
+          # 0 -> not acquired. Product of bool (0/1) results = logical AND. The
+          # traffic term keeps a spike's backlog draining under tail traffic
+          # (saturated pool, breached latency, demand at the knee) from acquiring
+          # a cache the hold rule would release at once.
+          - record: cache:acquire
+            expr: |
+              (min_over_time(app_pool_pressure[5s]) >= bool 0.7)
+              * (min_over_time(app_p99_ms[5s]) >= bool 150)
+              * (min_over_time(app_rps[5s]) > bool 30)
+          # HOLD = keep redis up while TRAFFIC stays above the store's knee, but
+          # ONLY while an acquire-initiated episode is still running. A plain rps
+          # trigger scales up on ANY rps>knee — a transient blip the acquire law
+          # rejects — because KEDA's trigger algebra cannot tell "hold an existing
+          # cache" from "start a new one". The rule is a LATCH: set by cache:acquire,
+          # held by rps>knee (bridging the window where the working cache masks
+          # sat+lat back to 0), cleared the moment rps falls to the knee — and,
+          # unlike a windowed max_over_time memory, it cannot re-arm on a LATER
+          # blip without a fresh acquire. (A 90s max_over_time memory was the
+          # first encoding; a post-spike blip inside the window falsely
+          # re-mounted — found by arrangement-shuffled verification.)
+          # Expressing the in-code one-line asymmetric law needs this extra stateful rule.
+          # last_over_time[10s] reads the latch's own previous value robustly
+          # (a plain `offset` misses samples on eval misalignment, and PromQL's
+          # `+` drops the result entirely when one side is empty — which gapped
+          # the hold series and dropped the cache mid-spike). The `or
+          # cache:acquire` bootstraps the series before its first sample exists.
+          - record: cache:hold
+            expr: |
+              clamp_max(
+                cache:acquire
+                + (last_over_time(cache:hold[10s]) * (app_rps > bool 30)),
+              1)
+              or cache:acquire
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  labels: { app: prometheus }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: prometheus } }
+  template:
+    metadata: { labels: { app: prometheus } }
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.53.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+            - "--storage.tsdb.path=/prometheus"
+            - "--storage.tsdb.retention.time=15m"
+          ports: [{ containerPort: 9090 }]
+          volumeMounts:
+            - { name: config, mountPath: /etc/prometheus }
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+            items:
+              - { key: prometheus.yml, path: prometheus.yml }
+              - { key: rules.yml, path: rules.yml }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+spec:
+  selector: { app: prometheus }
+  ports: [{ port: 9090, targetPort: 9090 }]

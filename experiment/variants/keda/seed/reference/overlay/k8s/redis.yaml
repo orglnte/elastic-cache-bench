@@ -1,0 +1,27 @@
+# Ephemeral cache — declared at 0 replicas; the KEDA ScaledObject scales it
+# 0<->1 on the app's pool_pressure. Its Service DNS ("redis") is what the app
+# reads as CACHE_HOST.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  labels: { app: redis }
+spec:
+  replicas: 0 # KEDA owns 0<->1
+  selector: { matchLabels: { app: redis } }
+  template:
+    metadata: { labels: { app: redis } }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 6379 }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  selector: { app: redis }
+  ports: [{ port: 6379, targetPort: 6379 }]

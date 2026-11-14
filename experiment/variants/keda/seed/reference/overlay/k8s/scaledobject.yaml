@@ -1,0 +1,52 @@
+# The autoscaler — KEDA scales the Redis Deployment 0<->1 to express the SAME
+# golden-signals cache law the pulumi reference authors in-code, but assembled here
+# out of external surfaces (Prometheus recording rules + this multi-trigger object).
+#
+# Two triggers, exploiting HPA's OR-up / AND-down semantics (desired = MAX over
+# triggers; scales to zero only when EVERY trigger is inactive):
+#
+#   * acquire (cache:acquire, a 0/1 recording rule) — SATURATION high AND LATENCY
+#     breaching AND TRAFFIC above the knee, SUSTAINED 5s (the ANDs + the
+#     blip-rejecting sustain all live in the PromQL rule, because KEDA can express
+#     none of them on a scale-from-zero). Drives the 0->1 mount.
+#   * traffic-hold (cache:rps) — HOLDS redis at 1 while rps stays above the store's
+#     SLO-safe knee (30). This is the asymmetric release: once mounted, the cache
+#     MASKS saturation+latency so `acquire` falls back to 0 almost immediately, but
+#     traffic-hold keeps the replica up until demand actually recedes. rps is the one
+#     golden signal the cache does not mask -> the only honest scale-down trigger.
+#
+# Parity with the pulumi reference is BY CONSTRUCTION: same thresholds (0.7 / 150ms / 30rps), same
+# 5s sustain, same ~3s release debounce (cooldownPeriod). The two references differ
+# only in WHERE the identical law is authored — 1 in-code seam vs this stack of
+# coordinated external artifacts. That authoring-locus gap is the exp-1 finding.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: redis-scaler
+spec:
+  scaleTargetRef:
+    name: redis
+  minReplicaCount: 0
+  maxReplicaCount: 1
+  pollingInterval: 1     # poll Prometheus as fast as KEDA allows (detection only)
+  cooldownPeriod: 3      # seconds all-triggers-inactive before 0 (~ an in-code release_sustain_s=3)
+  triggers:
+    # --- ACQUIRE: saturation AND latency, sustained (0/1 recording rule) ---------
+    - type: prometheus
+      name: acquire
+      metadata:
+        serverAddress: http://prometheus.ecb.svc.cluster.local:9090
+        query: cache:acquire
+        threshold: "1"             # rule is 0 or 1; desired = ceil(value/1)
+        activationThreshold: "0.5" # 0 -> 1 only once the rule reads 1 (both held 5s)
+    # --- TRAFFIC HOLD: keep redis up while demand exceeds the knee, but ONLY once a
+    #     sat+lat acquire fired (cache:hold gates rps>knee on max_over_time(acquire)).
+    #     This makes KEDA's effective acquire sat+lat exactly like the in-code law — the raw rps
+    #     trigger would otherwise scale up on a transient blip the acquire law rejects.
+    - type: prometheus
+      name: traffic-hold
+      metadata:
+        serverAddress: http://prometheus.ecb.svc.cluster.local:9090
+        query: cache:hold          # 0/1: rps>knee AND recently-acquired
+        threshold: "1"
+        activationThreshold: "0.5" # holds at 1 only while cache:hold reads 1
