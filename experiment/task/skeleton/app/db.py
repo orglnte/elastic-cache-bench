@@ -38,11 +38,12 @@ _SCHEMA = {
 async def open_pool(dsn: str, *, min_size: int | None = None, max_size: int = int(os.environ.get("POOL_MAX", "16"))) -> AsyncConnectionPool:
     # WARM POOL: pre-open the FULL pool (min_size = max_size) so the measured load
     # never pays cold connection-growth. Growing 2->16 on demand takes seconds
-    # when each connect crosses kind's NAT (conv_keda: pod -> kube-proxy -> host
-    # -> store), which queues requests and spikes pool_pressure at BASELINE before
-    # the spike — a cold-start artifact that trips the scaler prematurely. Opening
-    # the whole pool up front moves that cost into startup, behind the readiness
-    # gate, matching the warm pool the rig simulates. Identical for both variants.
+    # when each connect crosses network hops between the app and the store,
+    # which queues requests and spikes pool_pressure at BASELINE before the
+    # spike — a cold-start artifact that trips a load-driven policy prematurely.
+    # Opening the whole pool up front moves that cost into startup, behind the
+    # readiness gate, matching the warm pool the rig simulates, however the app
+    # is run.
     if min_size is None:
         min_size = max_size
     pool = AsyncConnectionPool(dsn, min_size=min_size, max_size=max_size, open=False)

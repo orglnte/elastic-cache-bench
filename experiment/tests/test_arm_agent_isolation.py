@@ -47,6 +47,18 @@ class TestTheSharedSkeleton(unittest.TestCase):
                         hits.append((str(f.relative_to(EXP)), word))
         self.assertEqual(hits, [])
 
+    def test_the_skeleton_every_arm_receives_names_no_variant(self):
+        names = set()
+        for cls in variant_classes():
+            names |= {cls.ID, tech_of(cls), *cls.ID.split("_")[:1]}
+        names.add("conv_")
+        hits = []
+        for f in (EXP / "task" / "skeleton").rglob("*"):
+            if f.is_file():
+                text = f.read_text(errors="replace").lower()
+                hits += [(str(f.relative_to(EXP)), n) for n in sorted(names) if n.lower() in text]
+        self.assertEqual(hits, [])
+
 
 if __name__ == "__main__":
     unittest.main()
