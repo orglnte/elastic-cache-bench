@@ -362,6 +362,7 @@ class TestSmokeIsAStubCellRun(unittest.TestCase):
                                   new_callable=mock.PropertyMock, return_value=Path(d)), \
                 mock.patch.object(runs.exp1, "_reference_cell", fake_reference_cell), \
                 mock.patch.object(runs.subprocess, "run", fake_run), \
+                mock.patch.object(runs.experiment._experiment, "_run_to_teardown", fake_run), \
                 mock.patch.object(runs.check, "probe_variants", return_value=0), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
             with self.assertRaises(SystemExit) as cm:
