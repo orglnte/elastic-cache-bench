@@ -299,7 +299,7 @@ class TestSmokeIsAStubCellRun(unittest.TestCase):
     prepared fresh in ws-smoke.nosync, exit 0 iff every arm is green."""
 
     def test_the_shape(self):
-        b = body_of("Experiment.smoke")
+        b = body_of("Experiment.smoke_cells")
         self.assertIn('verbs["reference_cell"](', b)
         self.assertIn("prepare(fresh=True)", b)
         self.assertIn("c.process_argv()", b)
@@ -308,7 +308,7 @@ class TestSmokeIsAStubCellRun(unittest.TestCase):
         self.assertEqual(runs.experiment._experiment.Experiment.SMOKE_DIR, "ws-smoke.nosync")
 
     def test_the_stub_cell_is_a_ref_smoke_cell_outside_the_scored_tree(self):
-        b = body_of("Experiment.smoke")
+        b = body_of("Experiment.smoke_cells")
         for kv in ('WORKSPACES_DIR=str(smoke_ws)', 'AGENT="ref"',
                    'SMOKE="1"', 'REFERENCE="1"'):
             self.assertIn(kv, b, kv)
