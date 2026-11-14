@@ -16,15 +16,23 @@ what belongs to this experiment, each rule with the failure it prevents.
    (machine-local, gitignored). Set the paths, the agents' credentials homes
    (`python3 cli.py experiment credentials AGENT`) and the verify hosts
    (`VERIFY_DOCKER_HOST`, one or more `ssh://user@host` daemons).
-3. **Tune each verify host** with the five checks of "Host tuning" below,
-   and set `[load]` in `fae.toml` until they pass.
-4. **Check:** `python3 cli.py experiment check` must print READY.
-5. **Queue and run:** `python3 cli.py queue add AGENT --matrix --to-rep N`,
+3. **Tune the load once** on one verify host with "Host tuning" below, and
+   set `[load]` in `fae.toml` until it passes.
+4. **Calibrate every verify host**, idle, one at a time:
+   `python3 cli.py experiment calibrate --host ssh://user@host`. It measures
+   the store, runs every variant's reference on all six arrangements and the
+   load-shape guard, and writes the host's section of
+   `fae_verify_timings.toml` (machine-local, gitignored). `--repeats 3`
+   measures the spread instead of estimating it.
+5. **Check:** `python3 cli.py experiment check` must print READY; it fails
+   on a host without a section.
+6. **Queue and run:** `python3 cli.py queue add AGENT --matrix --to-rep N`,
    then `python3 cli.py experiment run`.
-6. **Watch:** `python3 cli.py experiment status`; the run log names every
+7. **Watch:** `python3 cli.py experiment status`; the run log names every
    finished cell, alert and repair.
-7. **Add a verify host later:** repeat step 3 on it before it joins
-   `VERIFY_DOCKER_HOST`.
+8. **Add a verify host later:** calibrate it (step 4) before it joins
+   `VERIFY_DOCKER_HOST`; a verify on an uncalibrated host stands its cell
+   down with the command.
 
 ## Rules that bite here
 
@@ -52,15 +60,16 @@ what belongs to this experiment, each rule with the failure it prevents.
 5. **A wiped workspace retires its cell** (`Retire` in the transitions log):
    the id then names a new cell. Redo a cell by a fresh requeue, never by
    editing its ledger.
-6. **Every verify host is tuned before the experiment runs on it.** The
-   load is fixed numbers (rps, seconds) and the release limits are fixed
-   seconds of the schedule, tuned to one host's store. A host with a weaker
-   or stronger store puts the knee elsewhere, and the same build can pass on
-   one host and fail on another. `[load]` is one set of values for every
-   host in `VERIFY_DOCKER_HOST`, so the hosts of one pool must be identical
-   (machine type, image, disks), and each new host is checked before it
-   joins. Lower `top` rather than lengthen `ramp_s` to move saturation
-   later: the schedule's seconds, and so the release windows, stay the same.
+6. **Every verify host is calibrated before the experiment runs on it.**
+   The load is fixed numbers (rps, seconds) and the release limits are
+   fixed seconds of the schedule, tuned to one host's store. A host with a
+   weaker or stronger store puts the knee elsewhere, and the same build can
+   pass on one host and fail on another. Each host's section of
+   `fae_verify_timings.toml` records the load it was calibrated with and
+   what the references measured on it, and its verifies run with that load;
+   recalibrate a host when it or the experiment changes. Lower `top` rather
+   than lengthen `ramp_s` to move saturation later: the schedule's seconds,
+   and so the release windows, stay the same.
 
 ## The variants
 

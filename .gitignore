@@ -17,3 +17,4 @@ PEM.md
 # agent credentials, per CLI (never committed)
 .agent-home/
 COMMIT_MSG
+fae_verify_timings.toml
