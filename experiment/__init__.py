@@ -72,6 +72,11 @@ def verifier_class():
     return ElasticCacheVerifier
 
 
+def verify_host_probe():
+    from .verifier.probe import StoreBenchProbe
+    return StoreBenchProbe
+
+
 def verbs():
     from . import exp1, taint
     return {"reference_cell": exp1._reference_cell, "selftest": taint.selftest}

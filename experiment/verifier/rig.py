@@ -249,6 +249,23 @@ def db_down(env):
         _run(["docker", "rm", "-f", c])
 
 
+def store_bench(env, tag):
+    """The capped store's throughput on the daemon DOCKER_HOST names, on a
+    store and network of its own named for `tag`, removed after; None when
+    the bench did not run. `env` carries the store's image and caps."""
+    env = dict(env, DB_CONTAINER=f"{STORE_PREFIX}{tag}", DB_NET=f"{NET_PREFIX}{tag}",
+               DB_PORT="5432")
+    try:
+        ok, exports, err = db_up(env)
+        if not ok:
+            sys.stderr.write(f"store-bench: {err}\n")
+            return None
+        return db_bench_qps(dict(env, **exports), env.get("QUERY_CPU_OPS") or "5000")
+    finally:
+        db_down(env)
+        _run(["docker", "network", "rm", env["DB_NET"]])
+
+
 def db_warm(env):
     """Warm the store's CPU/page cache/connections from a client container so
     a cold start cannot trip the scaler at baseline. Best-effort."""
@@ -338,5 +355,10 @@ def cache_backend_ready(env):
 if __name__ == "__main__":
     if sys.argv[1:2] == ["cache-ready"]:
         sys.exit(0 if cache_backend_ready(os.environ) else 1)
-    sys.stderr.write("usage: python3 -m experiment.verifier.rig cache-ready\n")
+    if sys.argv[1:2] == ["store-bench"] and len(sys.argv) == 4:
+        qps = store_bench(json.loads(sys.argv[3]), sys.argv[2])
+        print(json.dumps({"store_qps": qps}))
+        sys.exit(0 if qps is not None else 1)
+    sys.stderr.write("usage: python3 -m experiment.verifier.rig cache-ready\n"
+                     "       python3 rig.py store-bench TAG STORE_ENV_JSON\n")
     sys.exit(2)
