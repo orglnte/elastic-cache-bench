@@ -65,7 +65,7 @@ load errors with their count).
 | `iterations.log` | the ledger, one tab-separated line per event: `PREPARED`, `START` / `END`, `AGENT` (agent seconds, client and its version), `CKPT` (git tree before and after the attempt), `VERIFY_READY`, `SHAPE` (one per arrangement), `ITER` (attempt verdict, `verify_s`, tree), `HEAL` (files moved back out of the agent's surface), `RESTORE`, `PAUSED`, `HALT`, `ALERT` |
 | `agent.attempt-N.log` | the agent client's stream for attempt N (tool calls, messages, token usage) |
 | `artifacts/` | the agent's final tree: the service it authored |
-| `.attempts.git`, `.attempts.index` | every attempt's tree as a git checkpoint |
+| `.attempts.git`, `.attempts.index` | every attempt's tree as a git checkpoint; released for the runs started after 14 November 2026, 12:00 UTC (70 runs) and the reference runs only (see below) |
 | `score.json` | the scored record; fields in the engine's `fae/experiment/scoring/SCHEMA.md` (attempts to green, agent seconds per attempt, turns, tool calls, tokens, cost, authored lines) |
 | `validation.json` | the run's integrity check: `VALID` or the taints that exclude it |
 | `.sealed` | the terminal state: verdict, attempts, time |
@@ -108,7 +108,86 @@ far). A mount counts only when `cache_mounted` and `infra_cache_up` agree.
    reference was added during collection: its first pass on the VMs came
    after the first `kedam` runs judged there.
 
+## In the released data, not in the paper's analysis
+
+1. Five Gemini runs that stopped before finishing, with no `score.json`:
+   `g38f_high_kedam_sealed_apidocs_T1_r9`,
+   `g38f_high_kedap_access_apidocs_T1_r7`,
+   `g4h_high_kedam_access_apidocs_T1_r8`,
+   `g4h_high_kedap_access_apidocs_T1_r7`,
+   `g4h_high_pulumi_sealed_apidocs_T1_r8`.
+2. Repetitions above 12 of any arm.
+
 ## Not in the released data
 
 Agent credential homes (`.agent-*`), the verify hosts' addresses (redacted in
 `verifier.log` and `.verify-host`), and machine-local paths.
+
+The runs started before 14 November 2026, 12:00 UTC (242 runs) ran in an
+earlier setup of this benchmark, whose paths, host names and project names
+appear in their files; in their text files these are replaced by
+placeholders, and their
+`.attempts.git` is not released, because its compressed objects cannot be
+redacted in place. Those runs keep their final tree in `artifacts/`
+(redacted), which is what scoring reads; the tree ids their `CKPT` and
+`ITER` lines name have no repository in the release.
+
+## Reproducing the runs
+
+The runs can be collected again from scratch; the steps below give the
+setup the last collection used. Model and client versions follow their
+providers, so a new collection runs the models as they are served then (the
+version each attempt ran is in its `AGENT` line).
+
+1. **Code.** This repository and the engine,
+   [fae](https://anonymous.4open.science/r/fae-7DD9/), checked out side by
+   side. Each start of the scheduler records the benchmark and engine
+   commits it ran in `.conduct/regimes.jsonl`; the last collection ran
+   benchmark `200f86c` on engine `f689ffa`.
+2. **Authoring host.** Python 3.11 or later with `typer` and `ujson`, and
+   Docker. The collection used an arm64 machine with 16 GB of memory and a
+   Docker daemon of 5 CPUs and 6 GB; the agents' containers run there.
+3. **Agents.** The `claude` and `agy` command-line clients, each with its
+   credential (`python3 cli.py experiment credentials AGENT`). The models
+   compared are `opus55`, `sonnet55`, `haiku55`, `g38f` and `g4h` in
+   `experiment/agents.toml`, all at high effort.
+4. **Verify hosts.** Four Google Cloud spot VMs of one machine type, ARM:
+
+   ```sh
+   gcloud compute instances create vh1 vh2 vh3 vh4 --project PROJECT \
+     --zone us-east4-b --machine-type n4a-highcpu-4 \
+     --image-project ubuntu-os-cloud --image-family ubuntu-minimal-2510-arm64 \
+     --boot-disk-size 30GB --boot-disk-type hyperdisk-balanced \
+     --provisioning-model SPOT --instance-termination-action STOP \
+     --no-restart-on-failure --maintenance-policy TERMINATE
+   gcloud compute config-ssh --project PROJECT
+   ```
+
+   On each VM: install Docker and rsync, add a user `operator` in the
+   `docker` group that the authoring host reaches by ssh key, and give it
+   write access to the absolute path of this checkout (the engine copies
+   each verify's files to the same path on the host):
+
+   ```sh
+   sudo apt-get update && sudo apt-get install -y docker.io rsync
+   sudo systemctl enable --now docker
+   sudo useradd -m -s /bin/bash -g operator -G docker operator
+   sudo mkdir -p /CHECKOUT_PARENT && sudo chown -R operator:operator /CHECKOUT_PARENT
+   ```
+
+5. **Configuration.** `python3 cli.py experiment init` writes `fae.toml`.
+   The collection set: `[rig] VERIFY_DOCKER_HOST` to the four
+   `ssh://operator@vhN.us-east4-b.PROJECT` daemons, `VERIFY_HOST_UP` and
+   `VERIFY_HOST_DOWN` to `gcloud compute instances start` / `stop` of the
+   four VMs, `[slots] work = 9`, `arm_keda_access = 3`, `arm_pulumi = 1`,
+   and `[load] top = 266`; every other key keeps its default.
+6. **Calibration.** Each VM, idle and one at a time:
+   `python3 cli.py experiment calibrate --host ssh://operator@vhN.us-east4-b.PROJECT`.
+   Then `python3 cli.py experiment check` must print READY.
+7. **Queue and run.** For each model:
+   `python3 cli.py queue add MODEL --matrix --to-rep 12`. Then
+   `python3 cli.py experiment run -n 9 --per-agent 3 --exclude-agent opencode`
+   (the collection ran the two Gemini models with
+   `--per-agent-override g4h=5,g38f=5`).
+8. **Scores and tables.** As in `ARTIFACTS.md`: `python3 cli.py results
+   score`, then `python3 -I analysis/stats.py workspaces.nosync OUT_DIR 12`.
