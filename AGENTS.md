@@ -78,13 +78,14 @@ cell id's slot: `pulumi_sealed` and `pulumi_access`, and the KEDA families,
 KEDA (`kedap_*`) and KEDA-hint (`kedam_*`), sealed and access — six, all
 `apidocs`. Each file names everything its agent reads
 (`[authoring.inputs]`: the prompt, the project layout, the api doc), its
-`factors` (`tech`, `access`, `docs`) and its infra class, one per tech
-(`Keda`, `Pulumi`), which reads the file's `access_infra` and `params`.
+`factors` (`tech`, `access`, `docs`) and its declarative `[substrate]` (`docker`
+or `k8s`, `lifecycle = "split"`, `access = false|true`) with a thin
+`DomainOverlay` per tech (`KedaOverlay`, `PulumiOverlay`).
 There is one task, T1 (photoshare).
 
-**KEDA and KEDA-hint.** One infra, one image, one contract; they differ in
-the scaler the docs allow (each file's api doc input, and its
-`[infra] params.scaler`). KEDA (`kedap_*`; `any.kedap.apidocs.api.md`) is
+**KEDA and KEDA-hint.** One substrate, one overlay, one image, one contract;
+they differ in the scaler the docs allow (each file's api doc input, and its
+`[substrate] params.scaler`). KEDA (`kedap_*`; `any.kedap.apidocs.api.md`) is
 bound to the `prometheus` scaler, the policy in PromQL recording rules;
 KEDA-hint (`kedam_*`; `any.kedam.apidocs.api.md`) to `metrics-api`, the
 policy computed in the app and exported as a field. The verify refuses a
@@ -93,52 +94,55 @@ charged `Rejected` right after the apply). The two families read different
 docs and are not pooled.
 
 **The secure runner.** The judged service runs in the cell's secure runner
-(`fae-secrun-<cid>`, the engine's `secrunner`): one core of its own, a copy
+(`ctx.runner` → `fae-secrun-<cid>`): one core of its own, a copy
 of the artifacts, the cell's network, no repo, no workspace and no Docker
 socket; the verify container keeps one core for k6, the trace and the rig.
 
 ## Infra per tech
 
 Everything a cell provisions sits on its network `fae-net-<cid>` and is
-reached by name: the store `fae-store-<cid>:5432`, a sidecar's daemon
-`fae-dind-<cid>:2375` and the cache it publishes, the judged service
-`fae-secrun-<cid>:8080`; `pulumi.env` carries exactly those.
+reached by name: the store `fae-store-<cid>:5432` (started via
+`ctx.start_fixture`), a verify sidecar's daemon `fae-vdind-<cid>:2375`
+(`ctx.substrate.docker_host`) and the cache it publishes, the judged service
+`fae-secrun-<cid>:8080`.
 
 In every variant the verifier runs the service, the command of the
-variant's `[verify.run]`, in the cell's secure runner
-(`experiment/variants/service.py`, `secrunner.for_variant`), from the
+variant's `[verify.run]`, through `ctx.runner`
+(`experiment/variants/service.py`), from the
 verify image, over a fresh copy of the artifacts (`<ws>/.verify-out/run`),
 with a scratch dir for its own state (`<ws>/.verify-out/secrun-scratch`:
 HOME, the pulumi variants' state backend). Per arrangement it clears a
-stale runner, makes the copy, calls the infra's `verify_setup` (which
-answers the service's environment and networks), starts the service and
+stale runner, makes the copy, calls `ctx.infra.verify_setup` (which
+provisions `ctx.substrate` + the tech's `DomainOverlay` and returns the
+service's environment and networks), starts the service and
 holds `/health`; on teardown it stops the service (keeping
-`service.deploy.log`) before the infra's `verify_teardown`. What a
+`service.deploy.log`) before `ctx.infra.verify_teardown` (and FAE tears down
+labeled fixtures and `ctx.substrate` in `finally`). What a
 bring-up rewrites (keda's `APP_HOST`) is rewritten in that copy, never in
 the judged tree.
 
-- **`kedap_*` / `kedam_*`** — every verify provisions its own throwaway kind
-  cluster (KEDA, metrics-server and the namespace installed) and deletes it
-  at teardown. The verify container joins the cluster's network and uses the
-  internal kubeconfig; the service's runner joins it too, so the cluster's
-  scraper reaches it: every `APP_HOST` in the service's copy of the
-  manifests is rewritten to the runner's name, and that copy is what is
-  applied. The cache's port-forward runs in the verify container and listens
-  where the runner reaches it (`CACHE_HOST` = the verify container).
-  `verify_setup` records ownership (`.verify-owned-cluster`) before it asks
-  for the cluster, and waits for metrics-server's rollout even on a cluster
-  it finds already there, so a half-settled cluster is never reused
-  unchecked. The access variants also get a per-cell sandbox cluster for
-  authoring, provisioned through the keda image, and take the `keda_access`
-  lock (one pool for every keda access variant, both scalers); the verify
-  never adopts that kubeconfig, so the sandbox is neither graded nor
-  touched.
-- **`pulumi_sealed` / `pulumi_access`** — a dind sidecar. The agent's
-  Pulumi program runs inside the service, on the service's core, with its
-  state backend in the runner's scratch. The sidecar is the
-  `pulumi_access` agent's own daemon, so it can hold the agent's leftovers;
-  the verify's clean-start guard and `verify_teardown` force-clean INSIDE the
-  sidecar, so residue the agent left never reads as a rig fault.
+- **`kedap_*` / `kedam_*`** — `[substrate] kind = "k8s", lifecycle = "split"`
+  with `cluster_prefix = "ecb-ka-"` and `KedaOverlay`. Every verify provisions
+  its own throwaway kind cluster (KEDA, metrics-server and the namespace
+  installed) and deletes it at teardown. The verify container joins the
+  cluster's network and uses the internal kubeconfig; the service's runner
+  joins it too, so the cluster's scraper reaches it: every `APP_HOST` in the
+  service's copy of the manifests is rewritten to the runner's name, and that
+  copy is what is applied. The cache's port-forward runs in the verify
+  container and listens where the runner reaches it (`CACHE_HOST` = the verify
+  container). `KedaOverlay` waits for metrics-server's rollout even on a
+  cluster found already there, so a half-settled cluster is never reused
+  unchecked. The access variants (`access = true`) also get a per-cell sandbox
+  cluster for authoring and take the `keda_access` lock (one pool for every
+  keda access variant, both scalers); the verify never adopts that kubeconfig,
+  so the sandbox is neither graded nor touched.
+- **`pulumi_sealed` / `pulumi_access`** — `[substrate] kind = "docker",
+  lifecycle = "split"` with `PulumiOverlay`. The agent's Pulumi program runs
+  inside the service, on the service's core, with its state backend in the
+  runner's scratch, talking to a fresh per-verify DinD (`fae-vdind-<cid>`).
+  `pulumi_access` (`access = true`) gets a separate cell-lifetime DinD sandbox
+  for authoring; `PulumiOverlay.on_verify_teardown` resets inner state before
+  FAE removes the verify DinD.
 
 ## The gate and the load law
 
