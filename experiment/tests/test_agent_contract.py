@@ -79,7 +79,7 @@ STUB_AGENT_CMD = (
     'docker run --rm --name "fae-agent-$CELL_ID" '
     '-v "$art":/workspace -w /workspace '
     '-v "$AGENT_TESTAGENT":/home/node/.testagent '
-    '-e CELL_ID -e TECH -e TESTAGENT_PLAN -e SERVICE_PORT '
+    '-e CELL_ID -e VARIANT -e TESTAGENT_PLAN -e SERVICE_PORT '
     '$AGENT_IMAGE python3 /home/node/.testagent/testagent.py "$(cat "$PROMPT_FILE")"')
 
 
@@ -167,6 +167,7 @@ class ContractTestCase(unittest.TestCase):
                    WORKSPACES_DIR=str(self.workspaces),
                    TRANSITIONS_LOG=str(self.workspaces / "transitions.log"),
                    AGENT="testagent", EFFORT="high", CONDITION="apidocs",
+                   AGENT_IMAGE="fae-ecb-variants-pulumi-agent:latest",
                    AGENT_CMD=STUB_AGENT_CMD, SERVICE_PORT="8080", WORK_SLOTS="7",
                    FAE_VARIANT_NOOP="1",
                    TESTAGENT_PLAN=plan, VERIFY_CALLS=str(self.calls),
@@ -272,8 +273,8 @@ class TestTheGreenPath(ContractTestCase):
 
     def test_the_ledger_records_the_whole_attempt_in_order(self):
         self.assertEqual(self.events(),
-                         ["PREPARED", "IMPL", "START", "CKPT", "VERIFY_READY",
-                          "SHAPE", "CKPT", "ITER", "END"])
+                         ["PREPARED", "IMPL", "START", "CKPT", "AGENT",
+                          "VERIFY_READY", "SHAPE", "CKPT", "ITER", "END"])
 
     def test_the_model_transitions_are_the_legal_green_sequence(self):
         self.assertEqual(self.transitions(),
