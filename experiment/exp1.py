@@ -96,13 +96,8 @@ def _exp1_verify(cid, variant, rep):
         c.teardown()
         raise RuntimeError(f"{variant} setup failed (see {c.ws}/hooks.log)")
     try:
-        lock = c.verify_lock_acquire()
-        if lock is None:
-            raise RuntimeError(f"{cid} stood down: .paused")
-        try:
+        with fae.experiment.exp().with_verify_lock(c):
             return c.verify()
-        finally:
-            lock.close()
     finally:
         c.teardown()
 
@@ -132,8 +127,7 @@ def exp1(args):
     infra-confirmed mount that starts in it, computable for every arm; provisioning = scaler decision -> mount,
     only where the decision is observable (sampler scaler_state, or the
     pulumi app-log markers) — '-' for external autoscalers like KEDA."""
-    from fae.conduct import Conduct
-    pid = None if args.report_only else Conduct().pid()
+    pid = None if args.report_only else fae.experiment.exp().conduct_pid()
     if pid:
         print(f"WARNING: conduct is running (pid {pid}); each exp1 verify queues for the "
               f"verify lock behind its cells", flush=True)

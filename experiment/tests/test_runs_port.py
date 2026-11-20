@@ -54,7 +54,7 @@ class TestExp1RunsTheVerifyInProcess(unittest.TestCase):
 
     def test_the_verify_is_a_method_call(self):
         b = body_of("_exp1_verify")
-        for step in ("c.prepare(fresh=True)", "c.setup()", "c.verify_lock_acquire()",
+        for step in ("c.prepare(fresh=True)", "c.setup()", "with_verify_lock(c)",
                      "c.verify()", "c.teardown()"):
             self.assertIn(step, b, step)
         self.assertNotIn("subprocess", b)
@@ -62,8 +62,7 @@ class TestExp1RunsTheVerifyInProcess(unittest.TestCase):
 
     def test_the_lock_is_released_and_the_arm_torn_down_on_every_path(self):
         b = body_of("_exp1_verify")
-        self.assertLess(b.index("c.verify_lock_acquire()"), b.index("c.verify()"))
-        self.assertIn("lock.close()", b[b.index("finally:"):])
+        self.assertLess(b.index("with_verify_lock(c)"), b.index("c.verify()"))
         self.assertIn("c.teardown()", b[b.rindex("finally:"):])
 
     def test_exp1_calls_it_and_reads_the_same_files(self):
@@ -466,24 +465,24 @@ class TestInfraIsThePreflight(unittest.TestCase):
 
     def test_every_active_variant_is_asked_and_stale_clusters_swept(self):
         import fae.experiment.variants as tr
-        from experiment import variants as sj
+        from fae.cell.substrate import K8sSubstrate
         asked = []
 
         class T:
-            def __init__(self, cell):
-                self.cell = cell
-                self.variant = runs.experiment.exp().definition.variant(cell.variant)
+            def __init__(self, vid, cid, ws, root, conf=None, *, definition=None):
+                self.vid = vid
+                self.variant = runs.experiment.exp().definition.variant(vid)
 
             def ok(self):
-                asked.append(self.cell.variant)
-                return self.cell.variant != "kedap_access_apidocs"
+                asked.append(self.vid)
+                return self.vid != "kedap_access_apidocs"
 
             def image(self):
                 return "fae-ecb-x:0"
 
         out = io.StringIO()
-        with mock.patch.object(tr, "for_cell", T), \
-                mock.patch.object(sj.KindCluster, "sweep_stale") as sweep, \
+        with mock.patch.object(tr, "infra_for", T), \
+                mock.patch.object(K8sSubstrate, "sweep") as sweep, \
                 contextlib.redirect_stdout(out):
             bad = runs.check.infra()
         self.assertEqual(sorted(asked), sorted(runs.experiment.exp().definition.active))

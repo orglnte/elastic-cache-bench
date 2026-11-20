@@ -31,8 +31,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from fae.cell.infra import secrunner
-from fae.cell.infra.base import HookFailure, Infra
+from fae.cell.infra.base import HookFailure
+from fae.cell.verify import RunnerHelper
 
 SERVICE_CPUS = 1
 SERVICE_LOG = "service.deploy.log"
@@ -50,26 +50,12 @@ class Rejected(RuntimeError):
 
 @dataclass
 class Up:
-    """What an infra's bring-up hands the verifier: the service's own
+    """What an overlay's bring-up hands the verifier: the service's own
     environment, the networks it joins besides the cell's (a cluster that
     scrapes it), and what the later stages must know (a kubeconfig)."""
     env: dict = field(default_factory=dict)
     networks: tuple = ()
     exported: dict = field(default_factory=dict)
-
-
-class ServiceInfra(Infra):
-    """The infra of a variant whose program is the judged service.
-    `verify_setup` answers an `Up`; `TAG` names its lines in deploy.log and
-    teardown.log."""
-    TAG = ""
-
-    def verify_setup(self, ctx, env):
-        return Up()
-
-    def not_ready(self, ctx, env):
-        """What to record when the service it brought up never answered:
-        the world as the bring-up left it, for the agent's feedback."""
 
 
 def http_ok(url, timeout=3):
@@ -143,7 +129,8 @@ class Bringup:
         self.artifacts = Path(ctx.artifacts)
         self.out = Path(ctx.out)
         self.port = str(self.env.get("SERVICE_PORT") or "8080")
-        self.host = secrunner.name_for(ctx.cid)
+        self._runner = ctx.runner if getattr(ctx, "runner", None) is not None else RunnerHelper(ctx)
+        self.host = self._runner.name
 
     @property
     def base_url(self):
@@ -157,7 +144,7 @@ class Bringup:
 
     def fresh_copy(self):
         """Made by the verifier before the bring-up, once per arrangement."""
-        return secrunner.fresh_copy(self.artifacts, self.out, COPY)
+        return self._runner.fresh_copy(COPY)
 
     def log(self, msg, name="deploy.log"):
         with (self.out / name).open("a") as f:
@@ -166,7 +153,7 @@ class Bringup:
     def clear_stale(self):
         """A runner left by a previous verify of this cell would answer
         /health for a stale build and the verify would grade that one."""
-        secrunner.stop_by_name(self.ctx.cid, self.out)
+        self._runner.stop()
 
     def runner(self, variant, up):
         """The variant's [verify.run] command over the copy, in the cell's
@@ -176,10 +163,11 @@ class Bringup:
         env.update({k: str(v) for k, v in up.env.items()})
         env.update(PYTHONPATH="/workspace", TASK=self.ctx.task, SERVICE_PORT=self.port)
         try:
-            return secrunner.for_variant(
-                variant, self.ctx.cid, self.copy, env=env, networks=tuple(up.networks),
+            return self._runner.for_variant(
+                self.copy, env=env, networks=tuple(up.networks),
                 scratch=self.out / SCRATCH, log=self.out / SERVICE_LOG, cpus=SERVICE_CPUS,
-                cpuset=self.env.get("CPUSET_MEASURED") or os.environ.get("CPUSET_MEASURED") or None)
+                cpuset=self.env.get("CPUSET_MEASURED") or os.environ.get("CPUSET_MEASURED") or None,
+                variant=variant)
         except RuntimeError as e:
             raise HookFailure(f"the service runs only from inside the verify container: {e}")
 
@@ -200,8 +188,7 @@ class Bringup:
         if wait_http(f"{self.base_url}/health", timeout_s):
             self.log(f"ready: /health is 200 at {self.base_url}")
             return
-        secrunner.SecRunner(image="", cid=self.ctx.cid, workdir=self.out, argv=(),
-                            log=self.out / SERVICE_LOG).dump_logs()
+        self._runner.stop(log=self.out / SERVICE_LOG)
         tail = ""
         try:
             tail = (self.out / SERVICE_LOG).read_text(errors="replace")[-3000:]
@@ -213,7 +200,7 @@ class Bringup:
     def stop_service(self):
         """Stop the service's runner by its name, keeping its output in
         service.deploy.log. Idempotent."""
-        secrunner.stop_by_name(self.ctx.cid, self.out, log=self.out / SERVICE_LOG)
+        self._runner.stop(log=self.out / SERVICE_LOG)
 
 
 class Restarting:

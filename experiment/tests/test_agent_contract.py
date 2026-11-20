@@ -146,7 +146,7 @@ class ContractTestCase(unittest.TestCase):
         for f in (ENGINE_TREE / "fae").iterdir():
             if f.is_file() and f.name != "config.sh":
                 (h / f.name).symlink_to(f)
-        for d in ("agent-container", "cell", "variants"):
+        for d in ("agent-container", "cell", "conduct", "experiment", "variants"):
             if (ENGINE_TREE / "fae" / d).is_dir():
                 (h / d).symlink_to(ENGINE_TREE / "fae" / d)
         # Provisioning is not the variant here (a dind sidecar per test would

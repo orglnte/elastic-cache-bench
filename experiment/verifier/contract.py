@@ -90,8 +90,9 @@ def port_owner_violation(c):
 def service_gone_violation(c, layout):
     """The teardown removes the cell's runner; one that survives would serve
     the next verify a stale build."""
-    from fae.cell.infra import secrunner
-    name = secrunner.name_for(c.v.cid)
+    ctx = getattr(c.v, "ctx", None)
+    runner = getattr(ctx, "runner", None) if ctx is not None else None
+    name = runner.name if runner is not None else f"fae-secrun-{c.v.cid}"
     rc, out, _ = c.run(["docker", "ps", "-aq", "--filter", f"name=^{name}$"])
     if rc == 0 and out.strip():
         return [Violation(f"{layout}: teardown stops the service",
@@ -106,8 +107,11 @@ def for_variant(verify):
     cls = fae.experiment.exp().definition.variant(verify.variant_id) if verify.variant_id else None
     if cls is None:
         return Contract(verify)
+    tech = cls.FACTORS.get("tech", "")
+    if not tech:
+        return Contract(verify)
     try:
-        mod = importlib.import_module(cls.INFRA.__module__ + ".verify.contract")
+        mod = importlib.import_module(f"experiment.variants.{tech}.verify.contract")
     except ModuleNotFoundError:
         return Contract(verify)
     return getattr(mod, "CONTRACT", Contract)(verify)

@@ -20,7 +20,13 @@ reference = "variants/keda/seed/reference_kedam/overlay"
 command = ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
 serves = 8080
 
-[infra]
-class = "variants.keda:Keda"
+[substrate]
+kind = "k8s"
+lifecycle = "split"
+access = true
+cluster_prefix = "ecb-ka-"
+cpus = 1
+memory = "4g"
+overlay = "variants.keda:KedaOverlay"
 lock = "keda_access"
 params = { scaler = "metrics-api" }

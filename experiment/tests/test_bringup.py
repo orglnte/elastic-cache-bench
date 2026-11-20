@@ -99,8 +99,8 @@ class TestTheKedaScrapeTargetRewrite(unittest.TestCase):
         """The service runs in the verify container, which joins the
         cluster's network: its own name is the address, and a bring-up
         outside a container has no address to give."""
-        body = _method(SOURCES["keda"], "verify_setup")
-        self.assertIn('env.get("FAE_VERIFY_CONTAINER")', body)
+        body = _method(SOURCES["keda"], "on_verify_setup")
+        self.assertIn('FAE_VERIFY_CONTAINER', body)
         self.assertLess(body.index("rewrite_scrape_targets("), body.index("reset_namespace("))
 
     def test_the_docs_promise_the_form_the_rewrite_honours(self):
@@ -129,7 +129,7 @@ class TestTheKedaNamespaceResetReleasesPinnedClusterIPs(unittest.TestCase):
             calls.append(argv)
             out = next(held) if argv[:3] == ["kubectl", "get", "ipaddresses"] else ""
             return SimpleNamespace(returncode=0, stdout=out, stderr="")
-        with mock.patch.object(base, "_run", run), mock.patch.object(base, "_ok", return_value=True), \
+        with mock.patch.object(base, "run", run), mock.patch.object(base, "ok", return_value=True), \
                 mock.patch.object(keda.time, "sleep"):
             keda.reset_namespace("ns", {}, lambda m: None)
         kinds = [a for a in calls if a[:2] == ["kubectl", "delete"]]
@@ -140,8 +140,8 @@ class TestTheKedaNamespaceResetReleasesPinnedClusterIPs(unittest.TestCase):
         self.assertLess(calls.index(kinds[-1]), calls.index(waits[0]))
 
     def test_the_reset_precedes_the_apply(self):
-        body = _method(SOURCES["keda"], "verify_setup")
-        self.assertLess(body.index("reset_namespace("), body.index('"kubectl", "apply"'))
+        body = _method(SOURCES["keda"], "on_verify_setup")
+        self.assertLess(body.index("reset_namespace("), body.index("substrate.apply("))
 
 
 
@@ -165,67 +165,65 @@ class TestEveryBringUpClearsAStaleService(unittest.TestCase):
 
 class TestEveryKedaVerifyProvisionsItsOwnCluster(unittest.TestCase):
     """Both keda arms: the verify cluster is provisioned per verification
-    and carries a "-verify" id, so it never shares a name with the
-    keda_access sandbox cluster and an inherited kubeconfig cannot make
-    the deploy skip provisioning."""
+    through FAE's K8sSubstrate (`lifecycle = "split"`) with a "-verify" id."""
 
     def test_provisioning_is_unconditional_and_distinctly_named(self):
-        body = _method(SOURCES["keda"], "verify_setup")
-        self.assertIn("-verify\"", body)
-        self.assertNotIn("kube.env", body)
-        self.assertLess(body.index(".provision("), body.index('"kubectl", "get", "ns"'))
-
-    def test_the_verify_owns_its_cluster_before_provisioning_starts(self):
-        """A provision that fails half-way (cluster up, metrics-server never
-        ready) must still be torn down: the ownership marker the teardown
-        reads is written BEFORE the provision, not after it succeeds."""
-        body = _method(SOURCES["keda"], "verify_setup")
-        self.assertLess(body.index("OWNED_CLUSTER).write_text("), body.index(".provision("))
+        from fae.cell.substrate import K8sContext
+        t = infra_for("kedap_sealed_apidocs", fake_cell(variant="kedap_sealed_apidocs"))
+        with tempfile.TemporaryDirectory() as d:
+            ctx = ctx_for(d, cid="x_high_kedap_sealed_apidocs_T1_r1", variant="kedap_sealed_apidocs")
+            sub = t.make_context(ctx)
+        self.assertIsInstance(sub, K8sContext)
+        self.assertTrue(sub.cluster_cid.endswith("-verify"))
+        self.assertEqual(t.SPEC.lifecycle, "split")
 
     def test_the_teardown_deletes_the_owned_cluster_and_its_kubeconfig(self):
+        from fae.cell.substrate import K8sContext
         with tempfile.TemporaryDirectory() as d:
-            ctx = ctx_for(d, cid="x_high_kedap_sealed_apidocs_T1_r1", variant="keda_sealed")
+            ctx = ctx_for(d, cid="x_high_kedap_sealed_apidocs_T1_r1", variant="kedap_sealed_apidocs")
             out = Path(ctx.out)
-            (out / keda.OWNED_CLUSTER).write_text("cid-verify\n")
-            (out / keda.KUBECFG).write_text("k")
+            (out / ".kubecfg").write_text("k")
+            t = infra_for("kedap_sealed_apidocs", fake_cell(variant="kedap_sealed_apidocs"))
+            ctx.substrate = t.make_context(ctx)
             deleted = []
             with mock.patch.object(service, "stop_pid"), \
-                    mock.patch.object(keda.KindCluster, "delete", lambda self: deleted.append(self.cid)):
-                infra_for("kedap_sealed_apidocs", fake_cell(variant="kedap_sealed_apidocs")).verify_teardown(ctx, {})
-            self.assertEqual(deleted, ["cid-verify"])
-            self.assertFalse((out / keda.OWNED_CLUSTER).exists())
-            self.assertFalse((out / keda.KUBECFG).exists())
+                    mock.patch.object(ctx.substrate.cluster, "delete",
+                                      lambda: deleted.append(ctx.substrate.cluster_cid)):
+                t.verify_teardown(ctx, {})
+            self.assertEqual(deleted, [f"{ctx.cid}-verify"])
+            self.assertFalse((out / ".kubecfg").exists())
 
 
 class TestThePulumiBringUp(unittest.TestCase):
     def test_the_service_provisions_into_the_verifys_own_daemon(self):
+        from fae.cell.substrate import DockerContext
         with tempfile.TemporaryDirectory() as d:
             t = infra_for("pulumi_sealed_apidocs", fake_cell(variant="pulumi_sealed_apidocs"))
-            with mock.patch.object(pulumi.VerifyDind, "start", return_value="tcp://fae-vdind-x:2375"):
-                up = t.verify_setup(ctx_for(d, variant="pulumi_sealed"),
-                                    {"SERVICE_PORT": "8080", "PULUMI_DOCKER_HOST": "tcp://fae-dind-x:2375"})
-        self.assertEqual(up.env["DOCKER_HOST"], "tcp://fae-vdind-x:2375")
+            ctx = ctx_for(d, variant="pulumi_sealed_apidocs")
+            ctx.substrate = t.make_context(ctx)
+            with mock.patch.object(DockerContext, "up", return_value=ctx.substrate):
+                up = t.verify_setup(ctx, {"SERVICE_PORT": "8080"})
+        self.assertEqual(up.env["DOCKER_HOST"], f"tcp://fae-vdind-{ctx.cid}:2375")
 
     def test_a_daemon_that_does_not_start_refuses(self):
+        from fae.cell.substrate import DockerContext
         with tempfile.TemporaryDirectory() as d:
             t = infra_for("pulumi_sealed_apidocs", fake_cell(variant="pulumi_sealed_apidocs"))
-            with mock.patch.object(pulumi.VerifyDind, "start", side_effect=base.HookFailure("no")):
+            ctx = ctx_for(d, variant="pulumi_sealed_apidocs")
+            ctx.substrate = t.make_context(ctx)
+            with mock.patch.object(DockerContext, "up", side_effect=base.HookFailure("no")):
                 with self.assertRaises(base.HookFailure):
-                    t.verify_setup(ctx_for(d, variant="pulumi_sealed"), {"SERVICE_PORT": "8080"})
+                    t.verify_setup(ctx, {"SERVICE_PORT": "8080"})
 
     def test_the_teardown_clears_the_sidecars_inner_world_after_the_service(self):
         with tempfile.TemporaryDirectory() as d:
-            ctx = ctx_for(d, variant="pulumi_sealed")
-            order = []
-
-            def run(argv, **kw):
-                order.append(argv[:4])
-                return SimpleNamespace(returncode=0, stdout="c1\nc2\n" if "ps" in argv else "", stderr="")
-            with mock.patch.object(base, "_run", run):
-                infra_for("pulumi_sealed_apidocs", fake_cell(variant="pulumi_sealed_apidocs")).verify_teardown(
-                    ctx, {"PULUMI_DOCKER_HOST": "tcp://d:2375"})
-            self.assertEqual(order, [["docker", "-H", "tcp://d:2375", "ps"],
-                                     ["docker", "-H", "tcp://d:2375", "rm"]])
+            ctx = ctx_for(d, variant="pulumi_sealed_apidocs")
+            t = infra_for("pulumi_sealed_apidocs", fake_cell(variant="pulumi_sealed_apidocs"))
+            ctx.substrate = t.make_context(ctx)
+            called = []
+            with mock.patch.object(ctx.substrate, "reset", side_effect=lambda: called.append("reset")):
+                t.verify_teardown(ctx, {})
+            self.assertEqual(called, ["reset"])
 
 
 class TestTheDocsStateThePerVerificationWorldReset(unittest.TestCase):

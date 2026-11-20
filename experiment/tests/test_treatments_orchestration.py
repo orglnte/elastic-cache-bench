@@ -1,10 +1,4 @@
-"""experiment/variants/: the infra classes' own cell_setup()/cell_teardown()/
-ok() bodies — the sequencing each orchestrates over DindSidecar/
-KindCluster. test_treatments.py already covers those helper
-classes' own mechanisms (ports, env files, sidecar lifecycle) in isolation; this drives the arm-level orchestration for real,
-with those helper classes mocked at the boundary — the same "mocked e2e"
-shape as test_verify_run_orchestration.py for Verify.run().
-"""
+"""Substrate + overlay orchestration for pulumi and keda variants."""
 import shutil
 import tempfile
 import unittest
@@ -14,10 +8,11 @@ from unittest import mock
 
 from _ctx import ROOT, infra_for
 
-from fae.experiment import variants as tr
+from experiment.variants import keda
 from fae.cell.infra import base as infra_base
-from experiment import variants as sj
-from experiment.verifier import rig as exp_rig
+from fae.cell.infra.base import AgentAccess
+from fae.cell.substrate import DockerContext, K8sContext
+from fae.experiment import variants as tr
 
 ROOT = Path(ROOT)
 
@@ -37,103 +32,80 @@ class TreatmentCase(unittest.TestCase):
         self.tmp = Path(self._tmp.name)
 
 
-
-
-
-
-
-
-
-
 class TestPulumiInfraOk(TreatmentCase):
     def test_docker_unreachable_halts(self):
-        t = infra_for("pulumi_sealed_apidocs", make_cell("pulumi_sealed", self.tmp))
-        with mock.patch.object(infra_base, "_ok", return_value=False):
+        t = infra_for("pulumi_sealed_apidocs", make_cell("pulumi_sealed_apidocs", self.tmp))
+        with mock.patch.object(infra_base, "ok", return_value=False):
             self.assertFalse(t.ok())
 
     def test_the_images_the_host_carries_are_all_it_needs(self):
-        t = infra_for("pulumi_sealed_apidocs", make_cell("pulumi_sealed", self.tmp))
-        with mock.patch.object(infra_base, "_ok", return_value=True), \
+        t = infra_for("pulumi_sealed_apidocs", make_cell("pulumi_sealed_apidocs", self.tmp))
+        with mock.patch.object(infra_base, "ok", return_value=True), \
                 mock.patch.object(shutil, "which", return_value=None):
             self.assertTrue(t.ok())
 
 
 class TestPulumiTeardownAndAccess(TreatmentCase):
-    def test_teardown_removes_the_sidecar(self):
-        t = infra_for("pulumi_sealed_apidocs", make_cell("pulumi_sealed", self.tmp))
-        fake_sidecar = mock.Mock()
-        t.sidecar = mock.Mock(return_value=fake_sidecar)
-        t.cell_teardown()
-        fake_sidecar.remove.assert_called_once()
+    def test_access_teardown_removes_the_sidecar(self):
+        t = infra_for("pulumi_access_apidocs", make_cell("pulumi_access_apidocs", self.tmp))
+        with mock.patch.object(DockerContext, "down") as down:
+            t.cell_teardown()
+        down.assert_called_once_with(force=True)
 
-    def test_access_setup_adds_the_docker_host_kube_mount(self):
-        t = infra_for("pulumi_access_apidocs", make_cell("pulumi_access", self.tmp))
-        fake_sidecar = mock.Mock()
-        t.sidecar = mock.Mock(return_value=fake_sidecar)
-        env = t.cell_setup()
-        fake_sidecar.ensure.assert_called_once()
-        self.assertIn("DOCKER_HOST=tcp://host.docker.internal:", env["KUBE_MOUNT"])
+    def test_access_setup_returns_docker_host_agent_access(self):
+        t = infra_for("pulumi_access_apidocs", make_cell("pulumi_access_apidocs", self.tmp))
+        fake_sub = DockerContext(t.cid, scope="cell", in_verify=False, api_port=24111)
+        with mock.patch.object(DockerContext, "ensure", return_value=fake_sub):
+            acc = t.cell_setup()
+        self.assertIsInstance(acc, AgentAccess)
+        self.assertEqual(acc.env["DOCKER_HOST"], "tcp://host.docker.internal:24111")
 
 
 class TestKedaInfraOk(TreatmentCase):
     def test_docker_unreachable_halts(self):
-        t = infra_for("kedap_sealed_apidocs", make_cell("keda_sealed", self.tmp))
-        with mock.patch.object(infra_base, "_ok", return_value=False):
+        t = infra_for("kedap_sealed_apidocs", make_cell("kedap_sealed_apidocs", self.tmp))
+        with mock.patch.object(infra_base, "ok", return_value=False):
             self.assertFalse(t.ok())
 
-    def test_the_sealed_arm_needs_no_host_tool(self):
-        # kind and kubectl are the verify image's
-        t = infra_for("kedap_sealed_apidocs", make_cell("keda_sealed", self.tmp))
-        with mock.patch.object(infra_base, "_ok", return_value=True), \
-                mock.patch.object(shutil, "which", return_value=None):
-            self.assertTrue(t.ok())
-
-    def test_the_access_arms_sandbox_needs_no_host_tool_either(self):
-        # the sandbox is provisioned through the keda image (Variant.tool)
-        t = infra_for("kedap_access_apidocs", make_cell("keda_access", self.tmp))
-        with mock.patch.object(infra_base, "_ok", return_value=True), \
-                mock.patch.object(shutil, "which", return_value=None):
-            self.assertTrue(t.ok())
+    def test_both_sealed_and_access_need_no_host_kind(self):
+        for vid in ("kedap_sealed_apidocs", "kedap_access_apidocs"):
+            t = infra_for(vid, make_cell(vid, self.tmp))
+            with mock.patch.object(infra_base, "ok", return_value=True), \
+                    mock.patch.object(shutil, "which", return_value=None):
+                self.assertTrue(t.ok())
 
 
-class TestKedaAccessSetup(TreatmentCase):
-    def _fake_cluster(self, name="ecb-ka-1", net="kind"):
-        c = mock.Mock()
-        c.provision.return_value = name
-        c.network.return_value = net
-        return c
-
-    def test_happy_path_writes_kube_env_and_returns_mounts(self):
-        cell = make_cell("keda_access", self.tmp)
+class TestKedaAccessSetupAndTeardown(TreatmentCase):
+    def test_happy_path_writes_kube_env_and_returns_access(self):
+        cell = make_cell("kedap_access_apidocs", self.tmp)
         t = infra_for("kedap_access_apidocs", cell)
-        fake = self._fake_cluster()
-        with mock.patch.object(sj.keda, "KindCluster", return_value=fake):
-            env = t.cell_setup()
+        fake = SimpleNamespace(
+            cluster_name="ecb-ka-1",
+            network="kind",
+            kubeconfig=cell.ws / "kubeconfig",
+            host_kubeconfig=cell.ws / "kubeconfig.host",
+        )
+        with mock.patch.object(K8sContext, "ensure", return_value=fake), \
+                mock.patch.object(keda, "_install_keda_stack", return_value="ecb"):
+            acc = t.cell_setup()
         self.assertIn("KIND_CLUSTER=ecb-ka-1", (cell.ws / "kube.env").read_text())
-        self.assertEqual(env["DOCKER_NET"], "--network kind")
-        self.assertIn("KUBECONFIG=/home/node/.kube/config", env["KUBE_MOUNT"])
+        self.assertEqual(acc.network, "kind")
+        self.assertEqual(acc.env["KUBECONFIG"], "/home/node/.kube/config")
 
     def test_a_provision_failure_halts(self):
-        cell = make_cell("keda_access", self.tmp)
+        cell = make_cell("kedap_access_apidocs", self.tmp)
         t = infra_for("kedap_access_apidocs", cell)
-        fake = mock.Mock()
-        fake.provision.side_effect = tr.HookFailure("kind create failed")
-        with mock.patch.object(sj.keda, "KindCluster", return_value=fake):
+        with mock.patch.object(K8sContext, "ensure", side_effect=tr.HookFailure("kind create failed")):
             with self.assertRaises(tr.HookFailure):
                 t.cell_setup()
 
-
-class TestKedaAccessTeardown(TreatmentCase):
-    def test_deletes_env_files_and_the_cluster(self):
-        cell = make_cell("keda_access", self.tmp)
+    def test_teardown_deletes_env_files_and_the_cluster(self):
+        cell = make_cell("kedap_access_apidocs", self.tmp)
         t = infra_for("kedap_access_apidocs", cell)
-        (cell.ws / "kubeconfig").write_text("x")
         (cell.ws / "kube.env").write_text("x")
-        fake = mock.Mock()
-        with mock.patch.object(sj.keda, "KindCluster", return_value=fake):
+        with mock.patch.object(K8sContext, "down") as down:
             t.cell_teardown()
-        fake.delete.assert_called_once()
-        self.assertFalse((cell.ws / "kubeconfig").exists())
+        down.assert_called_once_with(force=True)
         self.assertFalse((cell.ws / "kube.env").exists())
 
 

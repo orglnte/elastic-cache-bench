@@ -43,15 +43,13 @@ from pathlib import Path
 
 import fae.experiment
 from fae.experiment import config as _config
+from fae.experiment import variants as _variants
 from fae.cell.contrib import elastic_resource
 from fae.cell.contrib.elastic_resource import calibration as _calibration
 from fae.cell.contrib.elastic_resource.trace import first_request_epoch
-from fae.cell.infra import secrunner
-from fae.cell.infra.dind import VerifyDind
 from fae.cell.infra.base import HookFailure
-from fae.experiment.variants import _ShimCell
-from fae.cell.verify import (ENGINE_INSTRUMENTS, Ctx, Verdict, Verifier, _now, call,
-                             record_event, run_in_thread)
+from fae.cell.verify import (ENGINE_INSTRUMENTS, Ctx, RunnerHelper, Verdict, Verifier, call,
+                             now as _now, record_event, run_in_thread)
 
 from .. import CONFIG
 from ..variants import service
@@ -227,7 +225,8 @@ class Verify:
     def base_url(self):
         """The service in the cell's secure runner, reached by its name on
         the cell's network (variants/service.py)."""
-        return f"http://{secrunner.name_for(self.cid)}:{self.cfg.get('SERVICE_PORT', '8080')}"
+        runner = self.ctx.runner if getattr(self.ctx, "runner", None) is not None else RunnerHelper(self.ctx)
+        return f"http://{runner.name}:{self.cfg.get('SERVICE_PORT', '8080')}"
 
     def http(self, method, path, body=None, timeout=10):
         """Returns (status, text). A transport failure is a status of 0 — the
@@ -248,26 +247,15 @@ class Verify:
     # --- stages -----------------------------------------------------------
 
     def adopt_cell_env(self):
-        """The per-arm endpoints the cell's setup hook wrote.
-
-        pulumi provisions the cache INSIDE the cell's own dind
-        sidecar, invisible to host docker. Without these, the deploy, the
-        cache probes and the teardown all target the wrong infra — the
-        probe would report "no cache" forever, and the scaling gate would
-        fail every cell of those arms for a reason that has nothing to do
-        with the build.
-
-        keda_access's kube.env names the agent's sandbox cluster; the verify
-        never adopts it. Every keda verify provisions its own cluster in
-        deploy.sh, so the sandbox is neither graded nor touched, and the
-        guards' kubectl targets the verify cluster once deploy() adopts its
-        kubeconfig.
-        """
+        """The per-arm endpoints the cell's setup hook wrote or the verify's
+        own substrate exposes."""
         infra = self.infra()
         adopted = infra.verify_env() if infra is not None else {}
-        own = getattr(infra, "verify_endpoints", None)
-        if own is not None:
-            adopted = dict(adopted, **own(self.cid))
+        sub = self._substrate()
+        overlay = getattr(infra, "overlay", None) if infra is not None else None
+        ep = getattr(overlay, "verify_endpoints", None)
+        if ep is not None and sub is not None:
+            adopted = dict(adopted, **ep(sub))
         self._env.update(adopted)
         return adopted
 
@@ -275,12 +263,27 @@ class Verify:
         """The infra of the variant this verify judges, instantiated for the
         cell (its cid, workspace, root, config); None in artifact mode."""
         if self._infra is None and self.variant_id:
-            cls = fae.experiment.exp().definition.variant(self.variant_id)
-            if cls is not None:
-                cell = _ShimCell(self.cid, self.ws, self.root)
-                cell.variant = self.variant_id
-                self._infra = cls.INFRA(cls, cell)
+            if getattr(self.ctx, "infra", None) is not None:
+                self._infra = self.ctx.infra
+            else:
+                cls = fae.experiment.exp().definition.variant(self.variant_id)
+                if cls is not None:
+                    self._infra = _variants.infra_for(
+                        self.variant_id, self.cid, self.ws, self.root, self.conf
+                    )
         return self._infra
+
+    def _substrate(self):
+        if getattr(self.ctx, "substrate", None) is None:
+            infra = self.infra()
+            maker = getattr(infra, "make_context", None) if infra is not None else None
+            if callable(maker):
+                self.ctx.substrate = maker(self.ctx)
+        return self.ctx.substrate
+
+    def _infra_tag(self, infra):
+        overlay = getattr(infra, "overlay", None)
+        return getattr(overlay, "TAG", None) or getattr(infra, "TAG", None) or self.tech() or "infra"
 
     def keda_warmup(self):
         """k8s pipeline warm-up. BEST-EFFORT by design.
@@ -364,17 +367,17 @@ class Verify:
 
     def own_containers(self):
         """The docker containers that are THIS cell's footprint: the harness
-        store, the cell's dind sidecar, the access arm's daemon, the
-        verify cluster's node and the service's runner. The sampler counts
-        nothing else — other cells run beside this one."""
-        from fae.cell.infra.base import cksum
+        store, the verify substrate container/node, and the service's runner."""
         env = self.rigenv()
         own = [env["DB_CONTAINER"]]
-        if self.tech() == "pulumi":
-            own.append(VerifyDind.name_for(self.cid))
-        if self.tech() == "keda":
-            own.append(f"ecb-ka-{cksum(f'{self.cid}-verify')}-control-plane")
-        own.append(secrunner.name_for(self.cid))
+        sub = self._substrate()
+        if sub is not None:
+            if getattr(sub, "container", None):
+                own.append(sub.container)
+            elif getattr(sub, "node", None):
+                own.append(sub.node)
+        runner = self.ctx.runner if getattr(self.ctx, "runner", None) is not None else RunnerHelper(self.ctx)
+        own.append(runner.name)
         return own
 
     def db_up(self):
@@ -419,7 +422,12 @@ class Verify:
              "SERVICE_PORT": self.cfg.get("SERVICE_PORT", "8080"),
              "TASK": self.task, "CELL_ID": self.cid},
             self._env)
-        b = service.Bringup(self.ctx, env, f"deploy-{infra.TAG}")
+        b = service.Bringup(self.ctx, env, f"deploy-{self._infra_tag(infra)}")
+        self._substrate()
+        if self.ctx.variant_def is None:
+            self.ctx.variant_def = infra.variant
+        if self.ctx.conf is None:
+            self.ctx.conf = self.conf
         try:
             b.clear_stale()
             b.fresh_copy()
@@ -531,7 +539,7 @@ class Verify:
         infra = self.infra()
         if infra is not None:
             try:
-                service.Bringup(self.ctx, env, f"teardown-{infra.TAG}").stop_service()
+                service.Bringup(self.ctx, env, f"teardown-{self._infra_tag(infra)}").stop_service()
                 infra.verify_teardown(self.ctx, env)
             except Exception as e:      # noqa: BLE001 — best effort by contract
                 self.say(f"WARN: teardown raised {type(e).__name__}: {e}")
@@ -579,9 +587,11 @@ class Verify:
             return "seed"
 
     def tech(self):
-        """The variant's tech: the package of its infra class (variants/<tech>)."""
-        cls = fae.experiment.exp().definition.variant(self.variant_id) if self.variant_id else None
-        return cls.INFRA.__module__.rsplit(".", 1)[-1] if cls is not None else ""
+        """The variant's tech, declared in its factors."""
+        cls = self.ctx.variant_def if getattr(self.ctx, "variant_def", None) is not None else (
+            fae.experiment.exp().definition.variant(self.variant_id) if self.variant_id else None
+        )
+        return cls.FACTORS.get("tech", "") if cls is not None else ""
 
     # --- load -------------------------------------------------------------
 
@@ -1035,7 +1045,8 @@ class ElasticCacheVerifier(Verifier):
         """The store this verifier provisions, by its name: what a verify
         that did not finish leaves beside its container."""
         rig.db_down(rig.cell_identity(ctx.cid))
-        VerifyDind.remove_for(ctx.cid)
+        if getattr(ctx, "substrate", None) is not None:
+            ctx.substrate.down()
 
     def verify(self, ctx):
         v = Verify(ctx.artifacts, ctx.out, task=ctx.task, variant=ctx.variant,

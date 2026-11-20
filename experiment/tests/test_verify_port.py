@@ -168,7 +168,7 @@ class TestFailureClassification(VerifyTestCase):
         v = self.v()
         with mock.patch.object(v, "infra", return_value=mock.Mock(
                 TAG="pulumi", verify_setup=mock.Mock(side_effect=verify.service.Rejected("apply failed")))), \
-                mock.patch.object(verify.secrunner, "stop_by_name"):
+                mock.patch("fae.cell.infra.secrunner.stop_by_name"):
             self.assertEqual(v.deploy("pulumi"), "rejected")
         self.assertIn("apply failed", (v.out / "deploy.log").read_text())
 
@@ -176,14 +176,14 @@ class TestFailureClassification(VerifyTestCase):
         v = self.v()
         with mock.patch.object(v, "infra", return_value=mock.Mock(
                 TAG="pulumi", verify_setup=mock.Mock(side_effect=verify.HookFailure("dind absent")))), \
-                mock.patch.object(verify.secrunner, "stop_by_name"):
+                mock.patch("fae.cell.infra.secrunner.stop_by_name"):
             self.assertEqual(v.deploy("pulumi"), "nostart")
 
     def test_a_service_that_never_answers_is_scored_with_the_infras_diagnostics(self):
         v = self.v()
         infra = mock.Mock(TAG="pulumi", verify_setup=mock.Mock(return_value=verify.service.Up()))
         with mock.patch.object(v, "infra", return_value=infra), \
-                mock.patch.object(verify.secrunner, "stop_by_name"), \
+                mock.patch("fae.cell.infra.secrunner.stop_by_name"), \
                 mock.patch.object(verify.service.Bringup, "start_service"), \
                 mock.patch.object(verify.service.Bringup, "service_ready",
                                   side_effect=verify.service.Rejected("not ready")):
@@ -197,8 +197,8 @@ class TestFailureClassification(VerifyTestCase):
         infra = mock.Mock(TAG="pulumi", variant="the-variant",
                           verify_setup=mock.Mock(side_effect=lambda c, e: order.append("setup") or up))
         with mock.patch.object(v, "infra", return_value=infra), \
-                mock.patch.object(verify.secrunner, "stop_by_name",
-                                  side_effect=lambda *a, **k: order.append("clear")), \
+                mock.patch("fae.cell.infra.secrunner.stop_by_name",
+                           side_effect=lambda *a, **k: order.append("clear")), \
                 mock.patch.object(verify.service.Bringup, "fresh_copy",
                                   side_effect=lambda: order.append("copy")), \
                 mock.patch.object(verify.service.Bringup, "start_service",
@@ -213,8 +213,8 @@ class TestFailureClassification(VerifyTestCase):
         order = []
         infra = mock.Mock(TAG="pulumi", verify_teardown=lambda c, e: order.append("teardown"))
         with mock.patch.object(v, "infra", return_value=infra), \
-                mock.patch.object(verify.secrunner, "stop_by_name",
-                                  side_effect=lambda cid, w, log=None: order.append(("stop", log.name))), \
+                mock.patch("fae.cell.infra.secrunner.stop_by_name",
+                           side_effect=lambda cid, w, log=None: order.append(("stop", log.name))), \
                 mock.patch.object(verify.rig, "db_down"), \
                 mock.patch.object(verify.rig, "assert_no_cache_backend", return_value=None), \
                 mock.patch.object(verify.contract, "for_variant",
@@ -727,7 +727,9 @@ class TestPulumiStateStartsEmpty(VerifyTestCase):
         state = v.out / "secrun-scratch" / ".pulumi-state"
         state.mkdir(parents=True)
         (state / "stale.json").write_text("{}")
-        with mock.patch.object(verify.subprocess, "run", self._ok_run):
+        with mock.patch.object(v, "infra", return_value=mock.Mock(
+                TAG="pulumi", verify_setup=mock.Mock(side_effect=verify.HookFailure("stop")))), \
+                mock.patch("fae.cell.infra.secrunner.stop_by_name"):
             v.deploy("pulumi")
         self.assertFalse(state.exists())
 
@@ -739,16 +741,13 @@ class TestPulumiStateStartsEmpty(VerifyTestCase):
         self.assertLess(body.index("before_deploy()"), body.index("verify_setup("))
 
     def test_the_pulumi_teardown_waits_for_the_service_before_the_wipe(self):
-        # A shutdown hook may be mid-destroy in the Pulumi engine; removing
-        # the containers under it is what leaves a phantom in the state. The
-        # verifier stops the service before any infra's teardown.
         src = (Path(ROOT) / "experiment" / "verifier" / "__init__.py").read_text()
         body = src[src.index("    def teardown(self, tech):"):]
         self.assertLess(body.index(".stop_service()"), body.index("infra.verify_teardown("))
         src = (Path(ROOT) / "experiment" / "variants" / "pulumi" / "__init__.py").read_text()
-        body = src[src.index("    def verify_teardown("):]
+        body = src[src.index("    def on_verify_teardown("):]
         self.assertNotIn("stop_service", body)
-        self.assertLess(body.index('"ps", "-aq"'), body.index('"rm", "-f"'))
+        self.assertIn("substrate.reset()", body)
 
     def test_other_techs_leave_the_pulumi_state_alone(self):
         v = self.v()
@@ -780,7 +779,7 @@ class TestTheKedaVerifyClusterIsItsOwn(VerifyTestCase):
         with mock.patch.object(v, "infra", return_value=mock.Mock(
                 TAG="conv", verify_setup=mock.Mock(
                     return_value=verify.service.Up(exported={"KUBECONFIG": str(cfg)})))), \
-                mock.patch.object(verify.secrunner, "stop_by_name"), \
+                mock.patch("fae.cell.infra.secrunner.stop_by_name"), \
                 mock.patch.object(verify.service.Bringup, "start_service"), \
                 mock.patch.object(verify.service.Bringup, "service_ready"):
             self.assertEqual(v.deploy("keda"), "ok")

@@ -51,18 +51,19 @@ class TestTheVariants(unittest.TestCase):
                           "kedam_sealed_apidocs": "metrics-api", "kedam_access_apidocs": "metrics-api"})
 
     def test_one_infra_one_lock(self):
+        from fae.cell.substrate import K8sSubstrate
         d = fae.experiment.exp().definition
         for v in (v for v in d.ids if v.startswith("keda")):
             cls = d.variant(v)
-            self.assertIs(cls.INFRA, keda.Keda, v)
+            self.assertTrue(issubclass(cls.INFRA, K8sSubstrate), v)
+            self.assertIs(cls.SUBSTRATE.overlay, keda.KedaOverlay, v)
             self.assertEqual(cls.ACCESS_INFRA, "_access_" in v, v)
             self.assertEqual(cls.LOCK, "keda_access" if "_access_" in v else None, v)
 
     def test_the_check_runs_after_the_apply_and_before_the_service(self):
-        # the service starts once verify_setup has returned (the verifier's deploy)
         src = (ROOT / "experiment" / "variants" / "keda" / "__init__.py").read_text()
-        body = src[src.index("    def verify_setup("):src.index("    def not_ready(")]
-        self.assertLess(body.index('"kubectl", "apply"'), body.index("scaler_violation("))
+        body = src[src.index("    def on_verify_setup("):src.index("    def not_ready(")]
+        self.assertLess(body.index("substrate.apply("), body.index("scaler_violation("))
         self.assertLess(body.index("scaler_violation("), body.index("return service.Up("))
         self.assertIn("raise service.Rejected(why)", body)
 

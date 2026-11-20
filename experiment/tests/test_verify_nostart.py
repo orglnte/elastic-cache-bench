@@ -39,7 +39,7 @@ def block(start, end):
 
 
 def setup_body(tech):
-    body = VARIANTS[tech][VARIANTS[tech].index("    def verify_setup("):]
+    body = VARIANTS[tech][VARIANTS[tech].index("    def on_verify_setup("):]
     return body[:body.index("\n    def ", 10)]
 
 

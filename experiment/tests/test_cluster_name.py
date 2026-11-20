@@ -1,21 +1,20 @@
-"""KindCluster.name_for: the in-process POSIX cksum must equal the cksum binary.
-
-The keda variant derives kind cluster names as ecb-ka-<cksum(cid)> for the
-sandbox and the per-verify cluster alike, and the reaper's owner protection
-(_cluster_map) asks the same class. One formula, pinned against the real
-cksum binary here.
-"""
+"""K8sSubstrate cluster naming: the in-process POSIX cksum must equal the
+cksum binary, and the reaper asks the variant's substrate."""
 import subprocess
 import unittest
 
-from _ctx import ROOT, runs
+from _ctx import ROOT, runs  # noqa: F401
 from fae.cell.infra.base import cksum
-from experiment.variants.keda import KindCluster
+from fae.cell.substrate import cluster_name_for
 
 
 def _binary_cksum(data: bytes) -> int:
     out = subprocess.run(["cksum"], input=data, capture_output=True, check=True)
     return int(out.stdout.split()[0])
+
+
+def _name(cid):
+    return cluster_name_for(cid, "ecb-ka-")
 
 
 class TestCksumMatchesBinary(unittest.TestCase):
@@ -33,25 +32,22 @@ class TestCksumMatchesBinary(unittest.TestCase):
             self.assertEqual(cksum(v), _binary_cksum(v.encode()), v[:40])
 
     def test_cluster_name_shape(self):
-        name = KindCluster.name_for("haiku_high_kedap_access_apidocs_T1_r2")
+        name = _name("haiku_high_kedap_access_apidocs_T1_r2")
         self.assertRegex(name, r"^ecb-ka-\d+$")
-        self.assertEqual(name, KindCluster.name_for("haiku_high_kedap_access_apidocs_T1_r2"))
+        self.assertEqual(name, _name("haiku_high_kedap_access_apidocs_T1_r2"))
 
     def test_the_verify_cluster_is_named_from_the_cids_verify_id(self):
-        # the per-verify cluster and the access arm's sandbox never share a name
         cid = "sonnet_high_kedap_access_apidocs_T1_r3"
-        self.assertNotEqual(KindCluster.name_for(cid), KindCluster.name_for(f"{cid}-verify"))
+        self.assertNotEqual(_name(cid), _name(f"{cid}-verify"))
 
     def test_the_reaper_asks_the_subject(self):
         cid = "sonnet_high_kedap_access_apidocs_T1_r3"
         self.assertEqual(runs.zombies._infra_of("kedap_access_apidocs", cid),
-                         [("cluster", KindCluster.name_for(cid)),
-                          ("cluster", KindCluster.name_for(f"{cid}-verify"))])
-        # the cell names all it provisions: its variant's cluster, the
-        # engine's verify container and cell network, the verifier's store
+                         [("cluster", _name(cid)),
+                          ("cluster", _name(f"{cid}-verify"))])
         self.assertEqual(runs.experiment.exp().workspace.named_cell(cid).provisions(),
-                         [("cluster", KindCluster.name_for(cid)),
-                          ("cluster", KindCluster.name_for(f"{cid}-verify")),
+                         [("cluster", _name(cid)),
+                          ("cluster", _name(f"{cid}-verify")),
                           ("container", f"fae-verify-{cid}"), ("network", f"fae-net-{cid}"),
                           ("container", f"fae-store-{cid}")])
 

@@ -39,8 +39,8 @@ def variant_classes():
 
 
 def tech_of(cls):
-    """A variant's tech: the package of its infra class (variants/<tech>)."""
-    return cls.INFRA.__module__.rsplit(".", 1)[-1]
+    """A variant's tech, declared in its factors."""
+    return cls.FACTORS.get("tech", "")
 
 
 def infra_for(vid, cell):

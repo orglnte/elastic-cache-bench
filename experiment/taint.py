@@ -19,8 +19,6 @@ import re
 from pathlib import Path
 
 import fae.experiment
-from fae.cell import Cell
-from fae.cell import host_sleep
 
 
 def _parse(cid):
@@ -30,7 +28,8 @@ def _parse(cid):
 
 def _cell(d):
     """The cell whose folder is `d`."""
-    return Cell(Path(d).name, workspaces=Path(d).parent)
+    p = Path(d)
+    return fae.experiment.exp().cell(p.name, workspaces=p.parent)
 
 
 def _arm_of(variant):
@@ -80,7 +79,7 @@ def host_sleep_gap_s(cell):
             continue
         for a, b in zip(ts, ts[1:]):
             worst = max(worst, b - a)
-    return int(worst) if worst > host_sleep.GAP_S else 0
+    return int(worst) if worst > cell.SLEEP_GAP_S else 0
 
 
 def mount_report_text(cell):
@@ -255,9 +254,9 @@ def _k8s_deployment_names(cell):
 
 
 def _tech_of(variant):
-    """The variant's tech: the package of its infra class (variants/<tech>)."""
+    """The variant's tech, declared in its factors."""
     cls = fae.experiment.exp().definition.variant(variant)
-    return cls.INFRA.__module__.rsplit(".", 1)[-1] if cls is not None else ""
+    return cls.FACTORS.get("tech", "") if cls is not None else ""
 
 
 def junction_findings(cell, it_text, green):

@@ -20,6 +20,11 @@ reference = "variants/pulumi/seed/reference/overlay"
 command = ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
 serves = 8080
 
-[infra]
-class = "variants.pulumi:Pulumi"
+[substrate]
+kind = "docker"
+lifecycle = "split"
+access = true
+images = ["redis:7-alpine"]
+expose_ports = [6379]
+overlay = "variants.pulumi:PulumiOverlay"
 lock = "pulumi"
