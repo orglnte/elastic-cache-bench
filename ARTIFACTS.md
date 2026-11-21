@@ -30,3 +30,25 @@ The benchmark is three artifacts: two code repositories and one dataset.
 5. Each start of the scheduler is recorded in the dataset's
    `.conduct/regimes.jsonl` with the engine and benchmark commits, the
    concurrency caps and the CPU split it ran with.
+
+## From the links to the scores and tables
+
+1. Download this repository and the engine from the links above into two
+   folders side by side, the engine's named `fae`: `cli.py` here imports
+   it from `../fae` (or from `$FAE_DIR`).
+2. With Python 3.11 or later, `typer` and `ujson`, run the tests here
+   (`DOCKER_HOST=tcp://127.0.0.1:1 python3 -m unittest discover -s experiment/tests`)
+   and in the engine (`python3 -m unittest discover -s tests`).
+3. Download `ecb-runs.tar.gz` from the dataset link (8.2 GB, about 17 GB
+   unpacked) and unpack it beside the two folders (`tar xzf
+   ecb-runs.tar.gz`): `ecb-runs/workspaces.nosync/` holds the runs,
+   `results.csv` and `.conduct/regimes.jsonl`; `ecb-runs/ws-smoke.nosync/`
+   the reference runs.
+4. Score the runs, from this repository's folder:
+   `WORKSPACES_DIR=$PWD/../ecb-runs/workspaces.nosync python3 cli.py results score`.
+   Each run's `score.json` comes back as released, except the
+   authored-lines fields `DATA_CARD.md` names.
+5. Recompute the paper's tables:
+   `python3 -I analysis/stats.py ../ecb-runs/workspaces.nosync OUT_DIR 12`.
+6. To collect runs anew (Docker, the agents' credentials, verify hosts):
+   `DATA_CARD.md`, "Reproducing the runs".

@@ -132,6 +132,14 @@ redacted in place. Those runs keep their final tree in `artifacts/`
 (redacted), which is what scoring reads; the tree ids their `CKPT` and
 `ITER` lines name have no repository in the release.
 
+Rescoring the released runs (`python3 cli.py results score`) gives each
+run's released `score.json` back, except the authored-lines fields
+(`author_surface`) of 85 of these earlier runs: a placeholder replaced a
+name in their seeded `docs/project.md`, while `.skeleton_manifest` keeps the
+hash of the file as seeded, so scoring counts that file as authored. Their
+released `score.json` holds the counts from the files before the
+replacement; `analysis/stats.py` reads no authored-lines field.
+
 ## Reproducing the runs
 
 The runs can be collected again from scratch; the steps below give the
@@ -143,7 +151,10 @@ version each attempt ran is in its `AGENT` line).
    [fae](https://anonymous.4open.science/r/fae-7DD9/), checked out side by
    side. Each start of the scheduler records the benchmark and engine
    commits it ran in `.conduct/regimes.jsonl`; the last collection ran
-   benchmark `200f86c` on engine `f689ffa`.
+   benchmark `200f86c` on engine `f689ffa`. The anonymous links serve only
+   the latest commit of each, which comes after a refactoring of the
+   engine and of this benchmark's use of it; on the runs as collected it
+   gives the same `score.json` for all 312 scored runs.
 2. **Authoring host.** Python 3.11 or later with `typer` and `ujson`, and
    Docker. The collection used an arm64 machine with 16 GB of memory and a
    Docker daemon of 5 CPUs and 6 GB; the agents' containers run there.
