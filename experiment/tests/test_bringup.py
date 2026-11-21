@@ -232,7 +232,7 @@ class TestTheDocsStateThePerVerificationWorldReset(unittest.TestCase):
 
     def test_every_project_layout_carries_the_sentence(self):
         docs = sorted(SEEDS.glob("*/seed/T*.project_layout.md"))
-        self.assertEqual(len(docs), 6, "one layout per arm that has its own, the one task")
+        self.assertEqual(len(docs), 4, "one layout per tech and access, the one task")
         for doc in docs:
             self.assertIn("Every verification starts from a clean world", doc.read_text(), doc.name)
         for doc in docs:

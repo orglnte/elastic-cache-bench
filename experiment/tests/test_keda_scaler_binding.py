@@ -91,15 +91,11 @@ class TestTheDocsStateTheBinding(unittest.TestCase):
                          ("kedam_access_apidocs", "any.kedam.apidocs.api.md")):
             self.assertEqual(d.variant(vid).INPUTS["docs/keda.md"].name, doc)
 
-    def test_the_bound_base_doc_is_the_apidocs_doc(self):
-        for docs in ("kedap", "kedam"):
-            self.assertEqual((SEED / f"any.{docs}.api.md").read_text(),
-                             (SEED / f"any.{docs}.apidocs.api.md").read_text())
-
     def test_the_access_variants_read_the_live_cluster_layout(self):
-        live = (SEED / "T1.keda_access.project_layout.md").read_text()
-        for arm in ("kedap_access", "kedam_access"):
-            self.assertEqual((SEED / f"T1.{arm}.project_layout.md").read_text(), live)
+        d = fae.experiment.exp().definition
+        for vid in ("kedap_access_apidocs", "kedam_access_apidocs"):
+            self.assertEqual(d.variant(vid).INPUTS["docs/project.md"].name,
+                             "T1.keda_access.project_layout.md")
 
 
 class TestTheTaintRulesKnowTheTech(unittest.TestCase):

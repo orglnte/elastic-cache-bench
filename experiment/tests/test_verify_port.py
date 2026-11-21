@@ -466,7 +466,8 @@ class TestTheDefaultsAreTheRecordedNumbers(VerifyTestCase):
         # the verify lock runs one service at a time, so it need not move
         v = self.v()
         # the service runs in the cell's secure runner, reached by its name
-        self.assertEqual(v.base_url, f"http://fae-secrun-{v.cid}:8080")
+        from fae.cell.verify import RunnerHelper
+        self.assertEqual(v.base_url, f"http://{RunnerHelper(v.ctx).name}:8080")
         self.assertNotIn("SERVICE_PORT", v._env)
         self.assertEqual(v._env["DB_CONTAINER"], f"fae-store-{v.cid}")
         self.assertEqual(v._env["DB_NET"], f"fae-net-{v.cid}")

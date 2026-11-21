@@ -9,7 +9,7 @@ access_infra = true
 
 [authoring.inputs]
 "TODO.md" = "task/T1.PROMPT.md"
-"docs/project.md" = "variants/keda/seed/T1.kedap_access.project_layout.md"
+"docs/project.md" = "variants/keda/seed/T1.keda_access.project_layout.md"
 "docs/keda.md" = "variants/keda/seed/any.kedap.apidocs.api.md"
 
 [verify]
