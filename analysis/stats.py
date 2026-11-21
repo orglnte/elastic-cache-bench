@@ -124,6 +124,7 @@ def draft_path(name):
 
 
 def write(name, lines):
+    os.makedirs(OUT_DIR, exist_ok=True)
     with open(draft_path(name), "w") as f:
         f.write("\n".join(lines) + "\n")
     print("wrote", draft_path(name))

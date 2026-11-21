@@ -181,3 +181,10 @@ def test_in_scope_drops_excluded_cells(tmp_path, monkeypatch):
     monkeypatch.setattr(stats, "EXCLUDED", {"g38f_high_kedap_sealed_apidocs_T1_r8"})
     assert not stats.in_scope(make_cell(tmp_path, "g38f_high_kedap_sealed_apidocs_T1_r8"))
     assert stats.in_scope(make_cell(tmp_path, "g38f_high_kedap_sealed_apidocs_T1_r7"))
+
+
+def test_write_creates_a_missing_out_dir(tmp_path, monkeypatch):
+    out = tmp_path / "new" / "tables"
+    monkeypatch.setattr(stats, "OUT_DIR", str(out))
+    stats.write("t.tex", ["a", "b"])
+    assert (out / "t.tex").read_text() == "a\nb\n"
